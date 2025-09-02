@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["soavec"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MPL-2.0"
+homepage = "https://trynova.dev/"
+repository = "https://github.com/trynova/soavec/"
+readme = "README.md"
+keywords = ["struct-of-arrays", "vector", "soa"]
+categories = ["data-structures"]
+authors = ["The Nova Team"]
