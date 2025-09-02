@@ -3,4 +3,9 @@ name = "soavec"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+derive = ["soavec_derive"]
+
 [dependencies]
+soavec_derive = { path = "../soavec_derive", optional = true }

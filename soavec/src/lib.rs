@@ -13,6 +13,9 @@ use raw_vec::RawSoAVec;
 use raw_vec_inner::AllocError;
 pub use soable::{SoATuple, SoAble};
 
+#[cfg(feature = "derive")]
+pub use soavec_derive::*;
+
 #[repr(C)]
 pub struct SoAVec<T: SoAble> {
     buf: RawSoAVec<T>,

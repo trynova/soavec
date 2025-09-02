@@ -23,6 +23,9 @@ dependencies = [
 [[package]]
 name = "soavec"
 version = "0.1.0"
+dependencies = [
+ "soavec_derive",
+]
 
 [[package]]
 name = "soavec_derive"
