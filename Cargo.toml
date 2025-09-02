@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["soavec"]
+members = ["soavec", "soavec_derive"]
 
 [workspace.package]
 edition = "2024"
