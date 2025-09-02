@@ -1,21 +1,30 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Fields};
+use syn::{Data, DeriveInput, Fields, spanned::Spanned};
 
-pub fn expand_derive_soable(input: DeriveInput) -> TokenStream {
+pub fn expand_derive_soable(input: DeriveInput) -> syn::Result<TokenStream> {
     let struct_name = &input.ident;
     let generics = &input.generics;
 
     let fields = match &input.data {
         Data::Struct(data_struct) => match &data_struct.fields {
-            Fields::Named(fields_named) => &fields_named.named,
-            _ => panic!("Soable can only be derived for structs with named fields"),
+            Fields::Named(fields_named) => Ok(&fields_named.named),
+            _ => Err(syn::Error::new(
+                data_struct.fields.span(),
+                "Soable can only be derived for structs with named fields",
+            )),
         },
-        _ => panic!("Soable can only be derived for structs"),
-    };
+        _ => Err(syn::Error::new(
+            input.span(),
+            "Soable can only be derived for structs with named fields",
+        )),
+    }?;
 
     if fields.len() == 1 {
-        panic!("Single-field structs not supported; use a normal Vec");
+        return Err(syn::Error::new(
+            fields.span(),
+            "Soable cannot be derived for single-field structs; use a normal Vec instead",
+        ));
     }
 
     let field_names: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
@@ -89,5 +98,52 @@ pub fn expand_derive_soable(input: DeriveInput) -> TokenStream {
         }
     };
 
-    impl_block
+    Ok(impl_block)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_expand_derive_soable() {
+        let input: DeriveInput = syn::parse_quote! {
+            struct TestStruct {
+                a: u32,
+                b: u64,
+            }
+        };
+
+        let result = expand_derive_soable(input).unwrap();
+
+        assert!(
+            result
+                .to_string()
+                .contains("impl soavec :: SoAble for TestStruct")
+        );
+        assert!(result.to_string().contains("type TupleRepr = (u32 , u64)"));
+        assert!(result.to_string().contains("fn into_tuple"));
+    }
+
+    #[test]
+    fn test_single_field_error() {
+        let input: DeriveInput = syn::parse_quote! {
+            struct SingleField {
+                a: u32,
+            }
+        };
+
+        let result = expand_derive_soable(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_zero_field_error() {
+        let input: DeriveInput = syn::parse_quote! {
+            struct ZeroField;
+        };
+
+        let result = expand_derive_soable(input);
+        assert!(result.is_err());
+    }
 }
