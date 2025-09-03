@@ -34,13 +34,15 @@ pub fn expand_derive_soable(input: DeriveInput) -> syn::Result<TokenStream> {
     let field_names: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
     let field_types: Vec<_> = fields.iter().map(|f| &f.ty).collect();
 
+    // Note: use 'soa lifetime name as both more descriptive and less likely to
+    // shadow the struct's lifetime.
     let impl_block = quote! {
         unsafe impl #generics soavec::SoAble for #struct_name #generics {
             type TupleRepr = (#(#field_types),*);
-            type Ref<'a> = (#(&'a #field_types),*) where Self: 'a;
-            type Mut<'a> = (#(&'a mut #field_types),*) where Self: 'a;
-            type Slice<'a> = (#(&'a [#field_types]),*) where Self: 'a;
-            type SliceMut<'a> = (#(&'a mut [#field_types]),*) where Self: 'a;
+            type Ref<'soa> = (#(&'soa #field_types),*) where Self: 'soa;
+            type Mut<'soa> = (#(&'soa mut #field_types),*) where Self: 'soa;
+            type Slice<'soa> = (#(&'soa [#field_types]),*) where Self: 'soa;
+            type SliceMut<'soa> = (#(&'soa mut [#field_types]),*) where Self: 'soa;
 
             fn into_tuple(value: Self) -> Self::TupleRepr {
                 let Self { #(#field_names),* } = value;
@@ -52,31 +54,31 @@ pub fn expand_derive_soable(input: DeriveInput) -> syn::Result<TokenStream> {
                 Self { #(#field_names),* }
             }
 
-            fn as_ref<'a>(
-                _: std::marker::PhantomData<&'a Self>,
+            fn as_ref<'soa>(
+                _: std::marker::PhantomData<&'soa Self>,
                 value: <Self::TupleRepr as soavec::SoATuple>::Pointers,
-            ) -> Self::Ref<'a> {
+            ) -> Self::Ref<'soa> {
                 let (#(#field_names),*) = value;
                 unsafe {
                     (#(#field_names.as_ref()),*)
                 }
             }
 
-            fn as_mut<'a>(
-                _: std::marker::PhantomData<&'a mut Self>,
+            fn as_mut<'soa>(
+                _: std::marker::PhantomData<&'soa mut Self>,
                 value: <Self::TupleRepr as soavec::SoATuple>::Pointers,
-            ) -> Self::Mut<'a> {
+            ) -> Self::Mut<'soa> {
                 let (#(mut #field_names),*) = value;
                 unsafe {
                     (#(#field_names.as_mut()),*)
                 }
             }
 
-            fn as_slice<'a>(
-                _: std::marker::PhantomData<&'a Self>,
+            fn as_slice<'soa>(
+                _: std::marker::PhantomData<&'soa Self>,
                 value: <Self::TupleRepr as soavec::SoATuple>::Pointers,
                 len: u32,
-            ) -> Self::Slice<'a> {
+            ) -> Self::Slice<'soa> {
                 let len = len as usize;
                 let (#(#field_names),*) = value;
                 unsafe {
@@ -86,11 +88,11 @@ pub fn expand_derive_soable(input: DeriveInput) -> syn::Result<TokenStream> {
                 }
             }
 
-            fn as_mut_slice<'a>(
-                _: std::marker::PhantomData<&'a mut Self>,
+            fn as_mut_slice<'soa>(
+                _: std::marker::PhantomData<&'soa mut Self>,
                 value: <Self::TupleRepr as soavec::SoATuple>::Pointers,
                 len: u32,
-            ) -> Self::SliceMut<'a> {
+            ) -> Self::SliceMut<'soa> {
                 let len = len as usize;
                 let (#(#field_names),*) = value;
                 unsafe {
@@ -126,6 +128,30 @@ mod tests {
                 .contains("impl soavec :: SoAble for TestStruct")
         );
         assert!(result.to_string().contains("type TupleRepr = (u32 , u64)"));
+        assert!(result.to_string().contains("fn into_tuple"));
+    }
+
+    #[test]
+    fn test_expand_derive_soable_lifetime() {
+        let input: DeriveInput = syn::parse_quote! {
+            struct TestStruct<'a> {
+                a: &'a u32,
+                b: &'a u64,
+            }
+        };
+
+        let result = expand_derive_soable(input).unwrap();
+
+        assert!(
+            result
+                .to_string()
+                .contains("impl < 'a > soavec :: SoAble for TestStruct < 'a >"),
+        );
+        assert!(
+            result
+                .to_string()
+                .contains("type TupleRepr = (& 'a u32 , & 'a u64)")
+        );
         assert!(result.to_string().contains("fn into_tuple"));
     }
 
