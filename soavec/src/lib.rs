@@ -140,11 +140,9 @@ impl<T: SoAble> SoAVec<T> {
     /// ```
     /// use soavec::SoAVec;
     ///
-    /// fn main() {
-    ///     assert_eq!(std::mem::size_of::<((), ())>(), 0);
-    ///     let v = SoAVec::<((), ())>::new();
-    ///     assert_eq!(v.capacity(), u32::MAX);
-    /// }
+    /// assert_eq!(std::mem::size_of::<((), ())>(), 0);
+    /// let v = SoAVec::<((), ())>::new();
+    /// assert_eq!(v.capacity(), u32::MAX);
     /// ```
     #[inline]
     pub fn capacity(&self) -> u32 {
@@ -469,7 +467,7 @@ impl<T: SoAble> SoAVec<T> {
                     } else if const { core::mem::needs_drop::<T::TupleRepr>() } {
                         // SAFETY: cur was moved to f and its backing memory
                         // will never be accessed again.
-                        let _ = unsafe { T::TupleRepr::drop_in_place(cur_ptrs, 1) };
+                        unsafe { T::TupleRepr::drop_in_place(cur_ptrs, 1) };
                     }
                     // We already advanced the counter.
                     if DELETED {
@@ -530,6 +528,13 @@ impl<T: SoAble> Drop for SoAVec<T> {
             unsafe { T::TupleRepr::drop_in_place(T::TupleRepr::get_pointers(ptr, 0, cap), len) };
         }
         // RawVec handles deallocation
+    }
+}
+
+impl<T: SoAble> core::default::Default for SoAVec<T> {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::new()
     }
 }
 

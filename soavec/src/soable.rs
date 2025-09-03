@@ -22,7 +22,7 @@ use core::{
 /// invariants, unions, or enums the trait should be implemented manually with
 /// all the necessary safety requirements considered.
 ///
-/// # Safety requirements
+/// # Safety
 ///
 /// 1. The type must be safely droppable field-wise, **or** the
 ///    `MUST_DROP_AS_SELF` boolean must be set. If it is set, `SoAVec`
