@@ -1,5 +1,7 @@
 [package]
 name = "soavec_derive"
+repository = "https://github.com/trynova/soavec/tree/main/soavec_derive"
+description = "Macro implementation of #[derive(SoAble)]"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
