@@ -1,5 +1,7 @@
 [package]
 name = "soavec"
+repository = "https://github.com/trynova/soavec/tree/main/soavec"
+description = "A vector-like data structure for conventient growable Struct-of-Arrays creation and manipulation."
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -14,10 +16,10 @@ default = []
 derive = ["soavec_derive"]
 
 [dependencies]
-soavec_derive = { path = "../soavec_derive", optional = true }
+soavec_derive = { version = "=0.1.0", path = "../soavec_derive", optional = true }
 
 [dev-dependencies]
-soavec_derive = { version = "0.1.0", path = "../soavec_derive" }
+soavec_derive = { version = "=0.1.0", path = "../soavec_derive" }
 
 # This cfg cannot be enabled, but it still forces Cargo to keep soavec_derive's
 # version in lockstep with soavec's, even if someone depends on the two crates
