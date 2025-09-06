@@ -2,6 +2,62 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+//! A vector-like data-structure for convenient growable Struct-of-Arrays
+//! creation and manipulation.
+//!
+//! The [`SoAVec`] type is recommended for use in places where multiple structs
+//! need to be stored on the heap and their access to or iteration of is done
+//! mostly field-wise as opposed to all-fields-together.
+//!
+//! # Basic usage
+//!
+//! The [`SoAble`] trait can be derived on structs to conveniently split them
+//! up into Struct-of-Arrays format field-wise and to generate wrapper types
+//! for the [`as_ref`], [`as_mut`], [`as_slice`], and [`as_mut_slice`] methods'
+//! return types. For advanced usage, the [`SoAble`] trait can be implemented
+//! manually.
+//!
+//! When deriving the [`SoAble`] trait it is recommended to write the struct
+//! definition in order of alignment and size, eg. a `u64` field should come
+//! before a `[u32; 3]` field. If the [`SoAble`] trait is implemented manually
+//! then the struct's layout ordering does not matter but the chosen
+//! [tuple representation] should still uphold this same order. This ensures
+//! that the `SoAVec` does not need to add extra padding between field slices.
+//!
+//! # Example
+//!
+//! ```rust
+//! use soavec::soavec;
+//! use soavec_derive::SoAble;
+//!
+//! #[derive(Clone, SoAble)]
+//! struct Basic {
+//!   a: Vec<u32>,
+//!   b: usize,
+//!   c: u16,
+//!   d: bool,
+//! }
+//!
+//! let mut vec = soavec![Basic { a: vec![1, 2, 3], b: 55, c: 4, d: false }; 32].unwrap();
+//! let BasicSlice {
+//!   a,
+//!   b,
+//!   c,
+//!   d,
+//! } = vec.as_slice();
+//! assert_eq!(a, vec![vec![1, 2, 3]; 32]);
+//! assert_eq!(b, vec![55usize; 32]);
+//! assert_eq!(c, vec![4u16; 32]);
+//! assert_eq!(d, vec![false; 32]);
+//! ```
+//!
+//! [`SoAVec`]: SoAVec
+//! [`SoAble`]: SoAble
+//! [`as_ref`]: SoAVec::as_ref
+//! [`as_mut`]: SoAVec::as_mut
+//! [`as_slice`]: SoAVec::as_slice
+//! [`as_mut_slice`]: SoAVec::as_mut_slice
+
 mod macros;
 mod raw_vec;
 mod raw_vec_inner;
@@ -16,6 +72,210 @@ pub use soable::{SoATuple, SoAble};
 #[cfg(feature = "derive")]
 pub use soavec_derive::*;
 
+/// A contiguous growable Struct-of-Arrays type, written as `SoAVec<T>`, short
+/// for ‘Struct-of-Arrays vector’.
+///
+/// The API and layout is purposefully very similar to a standard library
+/// `Vec`, with the exception that the capacity is capped at 32-bit unsigned
+/// values.
+///
+/// # Examples
+///
+/// ```
+/// use soavec::SoAVec;
+///
+/// let mut vec = SoAVec::new();
+/// vec.push((1, 1)).unwrap();
+/// vec.push((2, 2)).unwrap();
+///
+/// assert_eq!(vec.len(), 2);
+/// assert_eq!(vec.get(0).unwrap(), (&1, &1));
+///
+/// assert_eq!(vec.pop(), Some((2, 2)));
+/// assert_eq!(vec.len(), 1);
+///
+/// let m = vec.get_mut(0).unwrap();
+/// *m.0 = 7;
+/// *m.1 = 7;
+/// assert_eq!(vec.get(0).unwrap(), (&7, &7));
+/// ```
+///
+/// The [`soavec!`] macro is provided for convenient initialization:
+///
+/// ```
+/// use soavec::soavec;
+///
+/// let mut vec1 = soavec![(1, 1), (2, 2), (3, 3)].unwrap();
+/// vec1.push((4, 4));
+/// ```
+///
+/// It can also initialize each element of a `Vec<T>` with a given value.
+///
+/// ```
+/// use soavec::soavec;
+///
+/// let vec = soavec![(0, 0); 5];
+/// ```
+///
+/// For more information, see
+/// [Capacity and Reallocation](#capacity-and-reallocation).
+///
+/// # Indexing
+///
+/// The `SoAVec` type does not allow access to values by index currently.
+///
+/// Use [`get`] and [`get_mut`] if you want to access an index in the `SoAVec`.
+///
+/// # Slicing
+///
+/// A `SoAVec` can be mutable. On the other hand, slices are read-only objects.
+/// To get a [slice][prim@slice], use [`as_slice`] or [`as_mut_slice`]. Note
+/// that these methods give out multiple slices, one for each field in the
+/// struct. Example:
+///
+/// ```
+/// use soavec::soavec;
+///
+/// fn read_slice(slice: &[usize]) {
+///     // ...
+/// }
+///
+/// let v = soavec![(0, 1), (0, 1)].unwrap();
+/// let (zeros_slice, ones_slice) = v.as_slice();
+/// read_slice(v.as_slice().0);
+/// read_slice(v.as_slice().1);
+/// ```
+///
+/// # Capacity and reallocation
+///
+/// The capacity of a Struct-of-Arrays vector is the amount of space allocated
+/// for any future elements that will be added onto the vector. This is not to
+/// be confused with the *length* of a vector, which specifies the number of
+/// actual elements within the vector. If a vector's length exceeds its
+/// capacity, its capacity will automatically be increased, but its elements
+/// will have to be reallocated. The reallocation may also fail due to OOM or
+/// other reasons, and these failures are exposed by the APIs. Thus methods
+/// such as [`push`] and [`SoAVec::with_capacity`] may fail.
+///
+/// For example, a vector with capacity 10 and length 0 would be an empty
+/// vector with space for 10 more elements. Pushing 10 or fewer elements onto
+/// the vector will not change its capacity or cause reallocation to occur.
+/// However, if the vector's length is increased to 11, it will have to
+/// reallocate, which can be slow. For this reason, it is recommended to use
+/// [`SoAVec::with_capacity`] whenever possible to specify how big the vector
+/// is expected to get. This is even more important than with a traditional
+/// `Vec`, as during reallocation `SoAVec` must also move all element data
+/// except for the first fields.
+///
+/// # Guarantees
+///
+/// `SoAVec` is guaranteed to be a (pointer, capacity, length) triplet where
+/// the capacity and length are 32-bit values regardless of architecture (note:
+/// 16-bit systems are not supported but there the capacity and length would be
+/// 16-bit values). The order of these fields is completely unspecified, and
+/// you should use the appropriate methods to modify these. The pointer will
+/// never be null, so this type is null-pointer-optimized.
+///
+/// However, the pointer might not actually point to allocated memory. In
+/// particular, if you construct a `SoAVec` with capacity 0 via
+/// [`SoAVec::new`], [`soavec![]`][`soavec!`],
+/// [`SoAVec::with_capacity(0)`][`SoAVec::with_capacity`], it will not allocate
+/// memory. Similarly, if you store zero-sized types inside a `SoAVec`, it will
+/// not allocate space for them. *Note that in this case the `Vec` might not
+/// report a [`capacity`] of 0*. `SoAVec` will allocate if and only if
+/// <code>[size_of::\<T>]\() * [capacity]\() > 0</code>. In general, `SoAVec`'s
+/// allocation details are very subtle indeed --- if you intend to allocate
+/// memory using a `SoAVec` and use it for something else (either to pass to
+/// unsafe code, or to build your own memory-backed collection), don't.
+///
+/// If a `SoAVec` *has* allocated memory, then the memory it points to is on
+/// the heap (as defined by the allocator Rust is configured to use by
+/// default), and its pointer points to a number of field slices determined by
+/// the contained type, with each field slice containing [`len`] initialized,
+/// contiguous field elements in order (what you would see if you call
+/// `as_slice` or `as_mut_slice`), followed by <code>[capacity] - [len]</code>
+/// logically uninitialized, contiguous field elements.
+///
+/// A vector containing two struct elements `'a'` and `'b'` with fields `'x'`
+/// and `'y'`, and with capacity 4 can be visualized as below. The top part is
+/// the `SoAVec` struct, it contains a pointer to the head of the allocation in
+/// the heap, length and capacity. The bottom part is the allocation on the
+/// heap, a contiguous memory block.
+///
+/// ```text
+///             ptr      len  capacity
+///        +--------+--------+--------+
+///        | 0x0123 |      2 |      4 |
+///        +--------+--------+--------+
+///             |
+///             v
+/// Heap   +--------+--------+--------+--------+--------+--------+--------+--------+
+///        |  'a.x' |  'b.x' | uninit | uninit |  'a.y' |  'b.y' | uninit | uninit |
+///        +--------+--------+--------+--------+--------+--------+--------+--------+
+/// ```
+///
+/// - **uninit** represents memory that is not initialized, see [`MaybeUninit`].
+/// - Note: the ABI is not stable and `SoAVec` makes no guarantees about its
+///   memory layout (including the order of fields).
+///
+/// `SoAVec` will never perform a "small optimization" where elements are
+/// actually stored on the stack.
+///
+/// `SoAVec` will never automatically shrink itself, even if completely empty.
+/// This ensures no unnecessary allocations or deallocations occur. Emptying a
+/// `SoAVec` and then filling it back up to the same [`len`] should incur no
+/// calls to the allocator.
+///
+/// [`push`] will never (re)allocate if the reported capacity is sufficient.
+/// [`push`] *will* (re)allocate if <code>[len] == [capacity]</code>. That is,
+/// the reported capacity is completely accurate. The size of the allocation is
+/// not guaranteed to be equal to <code>size_of::\<T>]\() * [capacity]</code>,
+/// as padding may be required between field slices.
+///
+/// `SoAVec` does not guarantee any particular growth strategy when
+/// reallocating when full, nor when [`reserve`] is called. The current
+/// strategy is basic and it may prove desirable to use a non-constant growth
+/// factor. Whatever strategy is used will of course guarantee *O*(1) amortized
+/// [`push`].
+///
+/// It is guaranteed, in order to respect the intentions of the programmer,
+/// that all of `soavec![e_1, e_2, ..., e_n]`, `soavec![x; n]`, and
+/// [`SoAVec::with_capacity(n)`] produce a `SoAVec` that requests an allocation
+/// of the exact size needed for precisely `n` elements from the allocator,
+/// and no other size (such as, for example: a size rounded up to the nearest
+/// power of 2). The allocator will return an allocation that is at least as
+/// large as requested, but it may be larger.
+///
+/// It is guaranteed that the [`SoAVec::capacity`] method returns a value that
+/// is at least the requested capacity and not more than the allocated
+/// capacity.
+///
+/// `SoAVec` will not specifically overwrite any data that is removed from it,
+/// but also won't specifically preserve it. Its uninitialized memory is
+/// scratch space that it may use however it wants. It will generally just do
+/// whatever is most efficient or otherwise easy to implement. Do not rely on
+/// removed data to be erased for security purposes. Even if you drop a
+/// `SoAVec`, its buffer may simply be reused by another allocation. Even if
+/// you zero a `SoAVec`'s memory first, that might not actually happen because
+/// the optimizer does not consider this a side-effect that must be preserved.
+///
+/// Currently, `SoAVec` does not guarantee the order in which elements are
+/// dropped.
+///
+/// [`get`]: SoAVec::get
+/// [`get_mut`]: SoAVec::get_mut
+/// [capacity]: SoAVec::capacity
+/// [`capacity`]: SoAVec::capacity
+/// [`SoAVec::capacity`]: SoAVec::capacity
+/// [size_of::\<T>]: size_of
+/// [len]: SoAVec::len
+/// [`len`]: SoAVec::len
+/// [`push`]: SoAVec::push
+/// [`as_slice`]: SoAVec::as_slice
+/// [`as_mut_slice`]: SoAVec::as_mut_slice
+/// [`reserve`]: SoAVec::reserve
+/// [`Vec::with_capacity(n)`]: SoAVec::with_capacity
+/// [`MaybeUninit`]: core::mem::MaybeUninit
 #[repr(C)]
 pub struct SoAVec<T: SoAble> {
     buf: RawSoAVec<T>,

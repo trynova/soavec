@@ -8,6 +8,8 @@ use core::{
     ptr::{NonNull, drop_in_place},
 };
 
+use private::Sealed;
+
 /// Used for defining the format and API of a type stored in `SoAVec` in a
 /// Struct-of-Arrays format.
 ///
@@ -314,9 +316,18 @@ pub unsafe trait SoAble: Sized {
     ) -> Self::SliceMut<'a>;
 }
 
+mod private {
+    pub trait Sealed {}
+
+    impl<T, U> Sealed for (T, U) {}
+    impl<T, U, V> Sealed for (T, U, V) {}
+    impl<T, U, V, W> Sealed for (T, U, V, W) {}
+    impl<T, U, V, W, X> Sealed for (T, U, V, W, X) {}
+}
+
 /// A trait for working with Struct-of-Arrays tuples. This enables working with
 /// Struct-of-Arrays allocations in a way similar to normal vector allocations.
-pub trait SoATuple {
+pub trait SoATuple: Sealed {
     /// A collection of N-1 field pointers where N is the cardinality of the
     /// Self tuple. The first field is always at offset 0 and is thus omitted
     /// from this collection.
@@ -381,7 +392,7 @@ pub trait SoATuple {
     /// location pointed to by `base`, `index`, and `capacity`.
     ///
     /// This is appropriate for initializing uninitialized memory, or overwriting
-    /// memory that has previously been [`read`] from.
+    /// memory that has previously been `read` from.
     ///
     /// ## Safety
     ///
