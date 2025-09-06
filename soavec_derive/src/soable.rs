@@ -43,7 +43,7 @@ pub fn expand_derive_soable(input: DeriveInput) -> syn::Result<TokenStream> {
 
     let type_params = generics.type_params().collect::<Vec<_>>();
     let lifetime_params = generics.lifetimes().collect::<Vec<_>>();
-    
+
     let has_type_generics = !type_params.is_empty();
     let has_lifetime_generics = !lifetime_params.is_empty();
 
@@ -272,7 +272,7 @@ mod tests {
         let result_str = result.to_string();
 
         assert!(result_str.contains("'a : 'soa"));
-        
+
         assert!(result_str.contains("& 'soa & 'a str"));
         assert!(result_str.contains("& 'soa u32"));
     }
@@ -280,8 +280,8 @@ mod tests {
     #[test]
     fn test_complex_generics() {
         let input: DeriveInput = syn::parse_quote! {
-            struct ComplexStruct<'a, 'b, T, U> 
-            where 
+            struct ComplexStruct<'a, 'b, T, U>
+            where
                 T: Clone,
                 U: Default
             {
@@ -295,10 +295,10 @@ mod tests {
         let result_str = result.to_string();
 
         assert!(result_str.contains("< 'soa , 'a , 'b , T , U >"));
-        
+
         assert!(result_str.contains("'a : 'soa"));
         assert!(result_str.contains("'b : 'soa"));
-        
+
         assert!(result_str.contains("T : Clone"));
         assert!(result_str.contains("U : Default"));
     }
