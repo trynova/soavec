@@ -50,10 +50,10 @@ fn test_generic_struct() {
 
     let generic = GenericStruct {
         first: "hello",
-        second: 3.14,
+        second: 3.21,
     };
     let tuple = SoAble::into_tuple(generic);
-    assert_eq!(tuple, ("hello", 3.14));
+    assert_eq!(tuple, ("hello", 3.21));
 
     let back = GenericStruct::from_tuple(("world", 2.71));
     assert_eq!(back.first, "world");

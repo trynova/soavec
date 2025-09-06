@@ -1004,153 +1004,6 @@ fn layout_array<T>(cap: u32) -> Result<Layout, LayoutError> {
     Layout::from_size_align(elem_layout.size() * cap as usize, elem_layout.align())
 }
 
-#[macro_export]
-macro_rules! soable {
-    () => (
-        compile_error!("soable macro requires explicit struct name, field names and types")
-    );
-    ($target:ident) => (
-        compile_error!("soable macro requires explicit field names and types")
-    );
-    ($target:ident { $field:ident: $type:ty }) => (
-        compile_error!("Single-field structs not supported; use a normal Vec")
-    );
-    ($target:ident { $($field:ident: $type:ty),+ }) => {
-        unsafe impl SoAble for $target {
-            type TupleRepr = ($($type),+);
-            type Ref<'a> = ($(&'a $type),+);
-            type Mut<'a> = ($(&'a mut $type),+);
-            type Slice<'a> = ($(&'a [$type]),+);
-            type SliceMut<'a> = ($(&'a mut [$type]),+);
-
-            fn into_tuple(value: Self) -> Self::TupleRepr {
-                let Self { $($field),+ } = value;
-                ($($field),+)
-            }
-
-            fn from_tuple(value: Self::TupleRepr) -> Self {
-                let ($($field),+) = value;
-                Self { $($field),+ }
-            }
-
-            fn as_ref<'a>(
-                _: PhantomData<&'a Self>,
-                value: <Self::TupleRepr as SoATuple>::Pointers,
-            ) -> Self::Ref<'a> {
-                let ($($field),+) = value;
-                unsafe {
-                    ($($field.as_ref()),+)
-                }
-            }
-
-            fn as_mut<'a>(
-                _: PhantomData<&'a mut Self>,
-                value: <Self::TupleRepr as SoATuple>::Pointers,
-            ) -> Self::Mut<'a> {
-                let ($(mut $field),+) = value;
-                unsafe {
-                    ($($field.as_mut()),+)
-                }
-            }
-
-            fn as_slice<'a>(
-                _: PhantomData<&'a Self>,
-                value: <Self::TupleRepr as SoATuple>::Pointers,
-                len: u32,
-            ) -> Self::Slice<'a> {
-                let len = len as usize;
-                let ($($field),+) = value;
-                unsafe {
-                    (
-                        $(core::slice::from_raw_parts($field.as_ptr(), len)),+
-                    )
-                }
-            }
-
-            fn as_mut_slice<'a>(
-                _: PhantomData<&'a mut Self>,
-                value: <Self::TupleRepr as SoATuple>::Pointers,
-                len: u32,
-            ) -> Self::SliceMut<'a> {
-                let len = len as usize;
-                let ($($field),+) = value;
-                unsafe {
-                    (
-                        $(core::slice::from_raw_parts_mut($field.as_ptr(), len)),+
-                    )
-                }
-            }
-        }
-    };
-    ($target:ident<$($lifetimes:lifetime),+> { $($field:ident: $type:ty),+ }) => {
-        unsafe impl<$($lifetimes),+> $crate::SoAble for $target<$($lifetimes),+> {
-            type TupleRepr = ($($type),+);
-            type Ref<'soa> = ($(&'soa $type),+) where Self: 'soa;
-            type Mut<'soa> = ($(&'soa mut $type),+) where Self: 'soa;
-            type Slice<'soa> = ($(&'soa [$type]),+) where Self: 'soa;
-            type SliceMut<'soa> = ($(&'soa mut [$type]),+) where Self: 'soa;
-
-            fn into_tuple(value: Self) -> Self::TupleRepr {
-                let Self { $($field),+ } = value;
-                ($($field),+)
-            }
-
-            fn from_tuple(value: Self::TupleRepr) -> Self {
-                let ($($field),+) = value;
-                Self { $($field),+ }
-            }
-
-            fn as_ref<'soa>(
-                _: core::marker::PhantomData<&'soa Self>,
-                value: <Self::TupleRepr as $crate::SoATuple>::Pointers,
-            ) -> Self::Ref<'soa> {
-                let ($($field),+) = value;
-                unsafe {
-                    ($($field.as_ref()),+)
-                }
-            }
-
-            fn as_mut<'soa>(
-                _: core::marker::PhantomData<&'soa mut Self>,
-                value: <Self::TupleRepr as $crate::SoATuple>::Pointers,
-            ) -> Self::Mut<'soa> {
-                let ($(mut $field),+) = value;
-                unsafe {
-                    ($($field.as_mut()),+)
-                }
-            }
-
-            fn as_slice<'soa>(
-                _: core::marker::PhantomData<&'soa Self>,
-                value: <Self::TupleRepr as $crate::SoATuple>::Pointers,
-                len: u32,
-            ) -> Self::Slice<'soa> {
-                let len = len as usize;
-                let ($($field),+) = value;
-                unsafe {
-                    (
-                        $(core::slice::from_raw_parts($field.as_ptr(), len)),+
-                    )
-                }
-            }
-
-            fn as_mut_slice<'soa>(
-                _: core::marker::PhantomData<&'soa mut Self>,
-                value: <Self::TupleRepr as $crate::SoATuple>::Pointers,
-                len: u32,
-            ) -> Self::SliceMut<'soa> {
-                let len = len as usize;
-                let ($($field),+) = value;
-                unsafe {
-                    (
-                        $(core::slice::from_raw_parts_mut($field.as_ptr(), len)),+
-                    )
-                }
-            }
-        }
-    };
-}
-
 unsafe impl<T, U> SoAble for (T, U) {
     type TupleRepr = Self;
 
@@ -1224,6 +1077,258 @@ unsafe impl<T, U> SoAble for (T, U) {
             (
                 core::slice::from_raw_parts_mut(a.as_ptr(), len),
                 core::slice::from_raw_parts_mut(b.as_ptr(), len),
+            )
+        }
+    }
+}
+
+unsafe impl<T, U, V> SoAble for (T, U, V) {
+    type TupleRepr = Self;
+
+    type Ref<'a>
+        = (&'a T, &'a U, &'a V)
+    where
+        Self: 'a;
+
+    type Mut<'a>
+        = (&'a mut T, &'a mut U, &'a mut V)
+    where
+        Self: 'a;
+
+    type Slice<'a>
+        = (&'a [T], &'a [U], &'a [V])
+    where
+        Self: 'a;
+
+    type SliceMut<'a>
+        = (&'a mut [T], &'a mut [U], &'a mut [V])
+    where
+        Self: 'a;
+
+    fn into_tuple(value: Self) -> Self::TupleRepr {
+        value
+    }
+
+    fn from_tuple(value: Self::TupleRepr) -> Self {
+        value
+    }
+
+    fn as_ref<'a>(
+        _: PhantomData<&'a Self>,
+        value: <Self::TupleRepr as SoATuple>::Pointers,
+    ) -> Self::Ref<'a> {
+        let (a, b, c) = value;
+        unsafe { (a.as_ref(), b.as_ref(), c.as_ref()) }
+    }
+
+    fn as_mut<'a>(
+        _: PhantomData<&'a mut Self>,
+        value: <Self::TupleRepr as SoATuple>::Pointers,
+    ) -> Self::Mut<'a> {
+        let (mut a, mut b, mut c) = value;
+        unsafe { (a.as_mut(), b.as_mut(), c.as_mut()) }
+    }
+
+    fn as_slice<'a>(
+        _: PhantomData<&'a Self>,
+        value: <Self::TupleRepr as SoATuple>::Pointers,
+        len: u32,
+    ) -> Self::Slice<'a> {
+        let len = len as usize;
+        let (a, b, c) = value;
+        unsafe {
+            (
+                core::slice::from_raw_parts(a.as_ptr(), len),
+                core::slice::from_raw_parts(b.as_ptr(), len),
+                core::slice::from_raw_parts(c.as_ptr(), len),
+            )
+        }
+    }
+
+    fn as_mut_slice<'a>(
+        _: PhantomData<&'a mut Self>,
+        value: <Self::TupleRepr as SoATuple>::Pointers,
+        len: u32,
+    ) -> Self::SliceMut<'a> {
+        let len = len as usize;
+        let (a, b, c) = value;
+        unsafe {
+            (
+                core::slice::from_raw_parts_mut(a.as_ptr(), len),
+                core::slice::from_raw_parts_mut(b.as_ptr(), len),
+                core::slice::from_raw_parts_mut(c.as_ptr(), len),
+            )
+        }
+    }
+}
+
+unsafe impl<T, U, V, W> SoAble for (T, U, V, W) {
+    type TupleRepr = Self;
+
+    type Ref<'a>
+        = (&'a T, &'a U, &'a V, &'a W)
+    where
+        Self: 'a;
+
+    type Mut<'a>
+        = (&'a mut T, &'a mut U, &'a mut V, &'a mut W)
+    where
+        Self: 'a;
+
+    type Slice<'a>
+        = (&'a [T], &'a [U], &'a [V], &'a [W])
+    where
+        Self: 'a;
+
+    type SliceMut<'a>
+        = (&'a mut [T], &'a mut [U], &'a mut [V], &'a mut [W])
+    where
+        Self: 'a;
+
+    fn into_tuple(value: Self) -> Self::TupleRepr {
+        value
+    }
+
+    fn from_tuple(value: Self::TupleRepr) -> Self {
+        value
+    }
+
+    fn as_ref<'a>(
+        _: PhantomData<&'a Self>,
+        value: <Self::TupleRepr as SoATuple>::Pointers,
+    ) -> Self::Ref<'a> {
+        let (a, b, c, d) = value;
+        unsafe { (a.as_ref(), b.as_ref(), c.as_ref(), d.as_ref()) }
+    }
+
+    fn as_mut<'a>(
+        _: PhantomData<&'a mut Self>,
+        value: <Self::TupleRepr as SoATuple>::Pointers,
+    ) -> Self::Mut<'a> {
+        let (mut a, mut b, mut c, mut d) = value;
+        unsafe { (a.as_mut(), b.as_mut(), c.as_mut(), d.as_mut()) }
+    }
+
+    fn as_slice<'a>(
+        _: PhantomData<&'a Self>,
+        value: <Self::TupleRepr as SoATuple>::Pointers,
+        len: u32,
+    ) -> Self::Slice<'a> {
+        let len = len as usize;
+        let (a, b, c, d) = value;
+        unsafe {
+            (
+                core::slice::from_raw_parts(a.as_ptr(), len),
+                core::slice::from_raw_parts(b.as_ptr(), len),
+                core::slice::from_raw_parts(c.as_ptr(), len),
+                core::slice::from_raw_parts(d.as_ptr(), len),
+            )
+        }
+    }
+
+    fn as_mut_slice<'a>(
+        _: PhantomData<&'a mut Self>,
+        value: <Self::TupleRepr as SoATuple>::Pointers,
+        len: u32,
+    ) -> Self::SliceMut<'a> {
+        let len = len as usize;
+        let (a, b, c, d) = value;
+        unsafe {
+            (
+                core::slice::from_raw_parts_mut(a.as_ptr(), len),
+                core::slice::from_raw_parts_mut(b.as_ptr(), len),
+                core::slice::from_raw_parts_mut(c.as_ptr(), len),
+                core::slice::from_raw_parts_mut(d.as_ptr(), len),
+            )
+        }
+    }
+}
+
+unsafe impl<T, U, V, W, X> SoAble for (T, U, V, W, X) {
+    type TupleRepr = Self;
+
+    type Ref<'a>
+        = (&'a T, &'a U, &'a V, &'a W, &'a X)
+    where
+        Self: 'a;
+
+    type Mut<'a>
+        = (&'a mut T, &'a mut U, &'a mut V, &'a mut W, &'a mut X)
+    where
+        Self: 'a;
+
+    type Slice<'a>
+        = (&'a [T], &'a [U], &'a [V], &'a [W], &'a [X])
+    where
+        Self: 'a;
+
+    type SliceMut<'a>
+        = (
+        &'a mut [T],
+        &'a mut [U],
+        &'a mut [V],
+        &'a mut [W],
+        &'a mut [X],
+    )
+    where
+        Self: 'a;
+
+    fn into_tuple(value: Self) -> Self::TupleRepr {
+        value
+    }
+
+    fn from_tuple(value: Self::TupleRepr) -> Self {
+        value
+    }
+
+    fn as_ref<'a>(
+        _: PhantomData<&'a Self>,
+        value: <Self::TupleRepr as SoATuple>::Pointers,
+    ) -> Self::Ref<'a> {
+        let (a, b, c, d, e) = value;
+        unsafe { (a.as_ref(), b.as_ref(), c.as_ref(), d.as_ref(), e.as_ref()) }
+    }
+
+    fn as_mut<'a>(
+        _: PhantomData<&'a mut Self>,
+        value: <Self::TupleRepr as SoATuple>::Pointers,
+    ) -> Self::Mut<'a> {
+        let (mut a, mut b, mut c, mut d, mut e) = value;
+        unsafe { (a.as_mut(), b.as_mut(), c.as_mut(), d.as_mut(), e.as_mut()) }
+    }
+
+    fn as_slice<'a>(
+        _: PhantomData<&'a Self>,
+        value: <Self::TupleRepr as SoATuple>::Pointers,
+        len: u32,
+    ) -> Self::Slice<'a> {
+        let len = len as usize;
+        let (a, b, c, d, e) = value;
+        unsafe {
+            (
+                core::slice::from_raw_parts(a.as_ptr(), len),
+                core::slice::from_raw_parts(b.as_ptr(), len),
+                core::slice::from_raw_parts(c.as_ptr(), len),
+                core::slice::from_raw_parts(d.as_ptr(), len),
+                core::slice::from_raw_parts(e.as_ptr(), len),
+            )
+        }
+    }
+
+    fn as_mut_slice<'a>(
+        _: PhantomData<&'a mut Self>,
+        value: <Self::TupleRepr as SoATuple>::Pointers,
+        len: u32,
+    ) -> Self::SliceMut<'a> {
+        let len = len as usize;
+        let (a, b, c, d, e) = value;
+        unsafe {
+            (
+                core::slice::from_raw_parts_mut(a.as_ptr(), len),
+                core::slice::from_raw_parts_mut(b.as_ptr(), len),
+                core::slice::from_raw_parts_mut(c.as_ptr(), len),
+                core::slice::from_raw_parts_mut(d.as_ptr(), len),
+                core::slice::from_raw_parts_mut(e.as_ptr(), len),
             )
         }
     }

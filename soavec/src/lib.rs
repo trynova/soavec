@@ -565,17 +565,19 @@ impl<T: SoAble> AsMut<SoAVec<T>> for SoAVec<T> {
 mod tests {
     use core::marker::PhantomData;
 
-    use crate::{SoATuple, SoAVec, SoAble, soable};
+    use soavec_derive::SoAble;
+
+    use crate as soavec;
+    use crate::{SoATuple, SoAVec, SoAble};
 
     #[test]
     fn basic_usage() {
         #[repr(C)]
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, SoAble)]
         struct Foo {
             a: u64,
             b: u32,
         }
-        soable!(Foo { a: u64, b: u32 });
 
         /// Conceptually; this is what we're doing here.
         const _ARRAY: [Foo; 16] = [Foo { a: 0, b: 1 }; 16];
@@ -584,26 +586,29 @@ mod tests {
         let mut foo = SoAVec::<Foo>::with_capacity(16).unwrap();
         foo.push(Foo { a: 0, b: 2 }).unwrap();
         let first = foo.get(0).unwrap();
-        assert_eq!(first.0, &0);
-        assert_eq!(first.1, &2);
+        assert_eq!(first.a, &0);
+        assert_eq!(first.b, &2);
 
         let first = foo.get_mut(0).unwrap();
-        *first.0 = 52;
-        *first.1 = 66;
-        assert_eq!(first.0, &52);
-        assert_eq!(first.1, &66);
+        *first.a = 52;
+        *first.b = 66;
+        assert_eq!(first.a, &52);
+        assert_eq!(first.b, &66);
 
         let first = foo.get(0).unwrap();
-        assert_eq!(first.0, &52);
-        assert_eq!(first.1, &66);
+        assert_eq!(first.a, &52);
+        assert_eq!(first.b, &66);
 
         foo.reserve(32).unwrap();
         let first = foo.get(0).unwrap();
-        assert_eq!(first.0, &52);
-        assert_eq!(first.1, &66);
+        assert_eq!(first.a, &52);
+        assert_eq!(first.b, &66);
 
         foo.push(Foo { a: 4, b: 8 }).unwrap();
-        let (a_slice, b_slice) = foo.as_slice();
+        let FooSlice {
+            a: a_slice,
+            b: b_slice,
+        } = foo.as_slice();
         assert_eq!(a_slice.len(), b_slice.len());
         assert_eq!(a_slice.len(), 2);
         assert_eq!(a_slice, &[52, 4]);
@@ -614,36 +619,38 @@ mod tests {
     #[test]
     fn basic_usage_with_lifetime() {
         #[repr(C)]
-        #[derive(Debug, Clone, Copy)]
+        #[derive(Debug, Clone, Copy, SoAble)]
         struct Foo<'a> {
             a: &'a u64,
             b: &'a u32,
         }
-        soable!(Foo<'b> { a: &'b u64, b: &'b u32 });
 
         let mut foo = SoAVec::<Foo>::with_capacity(16).unwrap();
         foo.push(Foo { a: &0, b: &2 }).unwrap();
         let first = foo.get(0).unwrap();
-        assert_eq!(first.0, &&0);
-        assert_eq!(first.1, &&2);
+        assert_eq!(first.a, &&0);
+        assert_eq!(first.b, &&2);
 
         let first = foo.get_mut(0).unwrap();
-        *first.0 = &52;
-        *first.1 = &66;
-        assert_eq!(first.0, &&52);
-        assert_eq!(first.1, &&66);
+        *first.a = &52;
+        *first.b = &66;
+        assert_eq!(first.a, &&52);
+        assert_eq!(first.b, &&66);
 
         let first = foo.get(0).unwrap();
-        assert_eq!(first.0, &&52);
-        assert_eq!(first.1, &&66);
+        assert_eq!(first.a, &&52);
+        assert_eq!(first.b, &&66);
 
         foo.reserve(32).unwrap();
         let first = foo.get(0).unwrap();
-        assert_eq!(first.0, &&52);
-        assert_eq!(first.1, &&66);
+        assert_eq!(first.a, &&52);
+        assert_eq!(first.b, &&66);
 
         foo.push(Foo { a: &4, b: &8 }).unwrap();
-        let (a_slice, b_slice) = foo.as_slice();
+        let FooSlice {
+            a: a_slice,
+            b: b_slice,
+        } = foo.as_slice();
         assert_eq!(a_slice.len(), b_slice.len());
         assert_eq!(a_slice.len(), 2);
         assert_eq!(a_slice, &[&52, &4]);
@@ -653,56 +660,45 @@ mod tests {
     #[test]
     fn more_basic_usage() {
         #[repr(C)]
-        #[derive(Debug, Clone, Copy)]
+        #[derive(Debug, Clone, Copy, SoAble)]
         struct Bar {
             a: u64,
             b: u32,
             c: u8,
         }
-        soable!(Bar {
-            a: u64,
-            b: u32,
-            c: u8
-        });
 
         let mut bar = SoAVec::<Bar>::with_capacity(16).unwrap();
         bar.reserve(32).unwrap();
         bar.push(Bar { a: 0, b: 2, c: 255 }).unwrap();
         let first = bar.get(0).unwrap();
-        assert_eq!(first.0, &0);
-        assert_eq!(first.1, &2);
-        assert_eq!(first.2, &255);
+        assert_eq!(first.a, &0);
+        assert_eq!(first.b, &2);
+        assert_eq!(first.c, &255);
     }
 
     #[test]
     fn basic_usage_with_bad_alignment() {
         #[repr(C)]
-        #[derive(Debug, Clone, Copy)]
+        #[derive(Debug, Clone, Copy, SoAble)]
         struct Foo {
             b: u32,
             a: u64,
         }
-        soable!(Foo { b: u32, a: u64 });
 
         #[repr(C)]
-        #[derive(Debug, Clone, Copy)]
+        #[derive(Debug, Clone, Copy, SoAble)]
         struct Bar {
             c: u8,
             b: u32,
             a: u64,
         }
-        soable!(Bar {
-            c: u8,
-            b: u32,
-            a: u64
-        });
 
         let mut foo = SoAVec::<Foo>::with_capacity(5).unwrap();
         foo.reserve(9).unwrap();
         foo.push(Foo { b: 2, a: 0 }).unwrap();
         let first = foo.get(0).unwrap();
-        assert_eq!(first.0, &2);
-        assert_eq!(first.1, &0);
+        assert_eq!(first.b, &2);
+        assert_eq!(first.a, &0);
         // let a_0: &u64 = foo.get_a(0);
         // let a_0: &u32 = foo.get_b(0);
         // let a_n: &[u64] = foo.get_all_a();
@@ -711,53 +707,42 @@ mod tests {
         bar.reserve(11).unwrap();
         bar.push(Bar { c: 255, b: 2, a: 0 }).unwrap();
         let first = bar.get(0).unwrap();
-        assert_eq!(first.0, &255);
-        assert_eq!(first.1, &2);
-        assert_eq!(first.2, &0);
+        assert_eq!(first.c, &255);
+        assert_eq!(first.b, &2);
+        assert_eq!(first.a, &0);
     }
 
     #[test]
     fn basic_usage_with_zst() {
         #[repr(C)]
-        #[derive(Debug, Clone, Copy)]
+        #[derive(Debug, Clone, Copy, SoAble)]
         struct Foo {
             b: (),
             a: u32,
         }
-        soable!(Foo { b: (), a: u32 });
 
         #[repr(C)]
-        #[derive(Debug, Clone, Copy)]
+        #[derive(Debug, Clone, Copy, SoAble)]
         struct Bar {
             c: u8,
             b: (),
             a: u64,
         }
-        soable!(Bar {
-            c: u8,
-            b: (),
-            a: u64
-        });
 
         #[repr(C)]
-        #[derive(Debug, Clone, Copy)]
+        #[derive(Debug, Clone, Copy, SoAble)]
         struct Baz {
             c: (),
             b: (),
             a: (),
         }
-        soable!(Baz {
-            c: (),
-            b: (),
-            a: ()
-        });
 
         let mut foo = SoAVec::<Foo>::with_capacity(5).unwrap();
         foo.reserve(9).unwrap();
         foo.push(Foo { a: 2, b: () }).unwrap();
         let first = foo.get(0).unwrap();
-        assert_eq!(first.0, &());
-        assert_eq!(first.1, &2);
+        assert_eq!(first.b, &());
+        assert_eq!(first.a, &2);
 
         let mut bar = SoAVec::<Bar>::with_capacity(7).unwrap();
         bar.reserve(11).unwrap();
@@ -768,9 +753,9 @@ mod tests {
         })
         .unwrap();
         let first = bar.get(0).unwrap();
-        assert_eq!(first.0, &255);
-        assert_eq!(first.1, &());
-        assert_eq!(first.2, &0);
+        assert_eq!(first.c, &255);
+        assert_eq!(first.b, &());
+        assert_eq!(first.a, &0);
 
         let mut baz = SoAVec::<Baz>::with_capacity(7).unwrap();
         baz.reserve(11).unwrap();
@@ -781,20 +766,19 @@ mod tests {
         })
         .unwrap();
         let first = baz.get(0).unwrap();
-        assert_eq!(first.0, &());
-        assert_eq!(first.1, &());
-        assert_eq!(first.2, &());
+        assert_eq!(first.a, &());
+        assert_eq!(first.b, &());
+        assert_eq!(first.c, &());
     }
 
     #[test]
     fn droppable_types() {
         #[repr(C)]
-        #[derive(Debug, Clone)]
+        #[derive(Debug, Clone, SoAble)]
         struct Foo {
             a: Vec<u64>,
             b: Box<u32>,
         }
-        soable!(Foo { a: Vec<u64>, b: Box<u32> });
 
         let mut foo = SoAVec::<Foo>::with_capacity(16).unwrap();
         foo.push(Foo {
@@ -803,30 +787,33 @@ mod tests {
         })
         .unwrap();
         let first = foo.get(0).unwrap();
-        assert_eq!(first.0, &[0]);
-        assert_eq!(**first.1, 2);
+        assert_eq!(first.a, &[0]);
+        assert_eq!(**first.b, 2);
 
         let first = foo.get_mut(0).unwrap();
-        first.0.push(52);
-        *first.1 = Box::new(66u32);
-        assert_eq!(first.0, &[0, 52]);
-        assert_eq!(**first.1, 66u32);
+        first.a.push(52);
+        *first.b = Box::new(66u32);
+        assert_eq!(first.a, &[0, 52]);
+        assert_eq!(**first.b, 66u32);
 
         let first = foo.get(0).unwrap();
-        assert_eq!(first.0, &[0, 52]);
-        assert_eq!(**first.1, 66u32);
+        assert_eq!(first.a, &[0, 52]);
+        assert_eq!(**first.b, 66u32);
 
         foo.reserve(32).unwrap();
         let first = foo.get(0).unwrap();
-        assert_eq!(first.0, &[0, 52]);
-        assert_eq!(**first.1, 66u32);
+        assert_eq!(first.a, &[0, 52]);
+        assert_eq!(**first.b, 66u32);
 
         foo.push(Foo {
             a: vec![4],
             b: Box::new(8),
         })
         .unwrap();
-        let (a_slice, b_slice) = foo.as_slice();
+        let FooSlice {
+            a: a_slice,
+            b: b_slice,
+        } = foo.as_slice();
         assert_eq!(a_slice.len(), b_slice.len());
         assert_eq!(a_slice.len(), 2);
         assert_eq!(a_slice, &[vec![0, 52], vec![4]]);
