@@ -10,17 +10,18 @@ pub fn expand_derive_soable(input: DeriveInput) -> syn::Result<TokenStream> {
     let struct_name = &input.ident;
     let generics = &input.generics;
 
-    let fields = match &input.data {
+    let (fields, is_tuple_struct) = match &input.data {
         Data::Struct(data_struct) => match &data_struct.fields {
-            Fields::Named(fields_named) => Ok(&fields_named.named),
-            _ => Err(syn::Error::new(
-                data_struct.fields.span(),
-                "Soable can only be derived for structs with named fields",
+            Fields::Named(fields_named) => Ok((&fields_named.named, false)),
+            Fields::Unnamed(fields_unnamed) => Ok((&fields_unnamed.unnamed, true)),
+            Fields::Unit => Err(syn::Error::new(
+                input.span(),
+                "Soable cannot be derived for unit structs",
             )),
         },
         _ => Err(syn::Error::new(
             input.span(),
-            "Soable can only be derived for structs with named fields",
+            "Soable can only be derived for structs",
         )),
     }?;
 
@@ -31,7 +32,20 @@ pub fn expand_derive_soable(input: DeriveInput) -> syn::Result<TokenStream> {
         ));
     }
 
-    let field_names: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
+    // Generate the field names from the original struct.
+    // - For a named struct it uses the original field names.
+    // - For a tuple struct it generates names like _0, _1, _2, etc.
+    let field_names: Vec<proc_macro2::Ident> = if is_tuple_struct {
+        (0..fields.len())
+            .map(|i| quote::format_ident!("_{}", i))
+            .collect()
+    } else {
+        fields
+            .iter()
+            .map(|f| f.ident.as_ref().unwrap().clone())
+            .collect()
+    };
+
     let field_types: Vec<_> = fields.iter().map(|f| &f.ty).collect();
 
     let ref_struct_name = quote::format_ident!("{}Ref", struct_name);
@@ -200,19 +214,15 @@ mod tests {
             }
         };
 
-        let result = expand_derive_soable(input).unwrap();
+        let result = expand_derive_soable(input).unwrap().to_string();
 
-        assert!(
-            result
-                .to_string()
-                .contains("impl soavec :: SoAble for TestStruct")
-        );
-        assert!(result.to_string().contains("type TupleRepr = (u32 , u64)"));
-        assert!(result.to_string().contains("fn into_tuple"));
-        assert!(result.to_string().contains("struct TestStructRef"));
-        assert!(result.to_string().contains("struct TestStructMut"));
-        assert!(result.to_string().contains("struct TestStructSlice"));
-        assert!(result.to_string().contains("struct TestStructSliceMut"));
+        assert!(result.contains("impl soavec :: SoAble for TestStruct"));
+        assert!(result.contains("type TupleRepr = (u32 , u64)"));
+        assert!(result.contains("fn into_tuple"));
+        assert!(result.contains("struct TestStructRef"));
+        assert!(result.contains("struct TestStructMut"));
+        assert!(result.contains("struct TestStructSlice"));
+        assert!(result.contains("struct TestStructSliceMut"));
     }
 
     #[test]
@@ -224,12 +234,12 @@ mod tests {
             }
         };
 
-        let result = expand_derive_soable(input).unwrap();
+        let result = expand_derive_soable(input).unwrap().to_string();
 
-        assert!(result.to_string().contains("pub struct TestStructMut"));
-        assert!(result.to_string().contains("pub struct TestStructRef"));
-        assert!(result.to_string().contains("pub struct TestStructSlice"));
-        assert!(result.to_string().contains("pub struct TestStructSliceMut"));
+        assert!(result.contains("pub struct TestStructMut"));
+        assert!(result.contains("pub struct TestStructRef"));
+        assert!(result.contains("pub struct TestStructSlice"));
+        assert!(result.contains("pub struct TestStructSliceMut"));
     }
 
     #[test]
@@ -241,22 +251,14 @@ mod tests {
             }
         };
 
-        let result = expand_derive_soable(input).unwrap();
+        let result = expand_derive_soable(input).unwrap().to_string();
 
-        assert!(
-            result
-                .to_string()
-                .contains("impl < 'a > soavec :: SoAble for TestStruct < 'a >"),
-        );
-        assert!(
-            result
-                .to_string()
-                .contains("type TupleRepr = (& 'a u32 , & 'a u64)")
-        );
-        assert!(result.to_string().contains("fn into_tuple"));
-        assert!(result.to_string().contains("TestStructRef < 'soa , 'a , >"));
-        assert!(result.to_string().contains("'a : 'soa"));
-        assert!(result.to_string().contains("& 'soa & 'a u32"));
+        assert!(result.contains("impl < 'a > soavec :: SoAble for TestStruct < 'a >"),);
+        assert!(result.contains("type TupleRepr = (& 'a u32 , & 'a u64)"));
+        assert!(result.contains("fn into_tuple"));
+        assert!(result.contains("TestStructRef < 'soa , 'a , >"));
+        assert!(result.contains("'a : 'soa"));
+        assert!(result.contains("& 'soa & 'a u32"));
     }
 
     #[test]
@@ -268,13 +270,12 @@ mod tests {
             }
         };
 
-        let result = expand_derive_soable(input).unwrap();
-        let result_str = result.to_string();
+        let result = expand_derive_soable(input).unwrap().to_string();
 
-        assert!(result_str.contains("'a : 'soa"));
+        assert!(result.contains("'a : 'soa"));
 
-        assert!(result_str.contains("& 'soa & 'a str"));
-        assert!(result_str.contains("& 'soa u32"));
+        assert!(result.contains("& 'soa & 'a str"));
+        assert!(result.contains("& 'soa u32"));
     }
 
     #[test]
@@ -301,6 +302,24 @@ mod tests {
 
         assert!(result_str.contains("T : Clone"));
         assert!(result_str.contains("U : Default"));
+    }
+
+    #[test]
+    fn test_tuple_struct() {
+        let input: DeriveInput = syn::parse_quote! {
+            struct TupleStruct(u32, f64, String);
+        };
+
+        let result = expand_derive_soable(input).unwrap().to_string();
+
+        assert!(result.contains("struct TupleStructRef"));
+        assert!(result.contains("struct TupleStructMut"));
+        assert!(result.contains("struct TupleStructSlice"));
+        assert!(result.contains("struct TupleStructSliceMut"));
+
+        assert!(result.contains("pub _0 : & 'soa u32"));
+        assert!(result.contains("pub _1 : & 'soa f64"));
+        assert!(result.contains("pub _2 : & 'soa String"));
     }
 
     #[test]
