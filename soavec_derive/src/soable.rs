@@ -94,6 +94,14 @@ pub fn expand_derive_soable(input: DeriveInput) -> syn::Result<TokenStream> {
 
     let struct_vis = &input.vis;
 
+    // Generate different patterns for destructuring and constructing depending
+    // on whether it is a tuple struct or a named struct.
+    let struct_pattern = if is_tuple_struct {
+        quote! { Self(#(#field_names),*) }
+    } else {
+        quote! { Self { #(#field_names),* } }
+    };
+
     // Note: use 'soa lifetime name as both more descriptive and less likely to
     // shadow the struct's lifetime.
     let expanded = quote! {
@@ -135,13 +143,13 @@ pub fn expand_derive_soable(input: DeriveInput) -> syn::Result<TokenStream> {
             type SliceMut<'soa> = #slice_mut_struct_name #helper_ty_generics where Self: 'soa;
 
             fn into_tuple(value: Self) -> Self::TupleRepr {
-                let Self { #(#field_names),* } = value;
+                let #struct_pattern = value;
                 (#(#field_names),*)
             }
 
             fn from_tuple(value: Self::TupleRepr) -> Self {
                 let (#(#field_names),*) = value;
-                Self { #(#field_names),* }
+                #struct_pattern
             }
 
             fn as_ref<'soa>(

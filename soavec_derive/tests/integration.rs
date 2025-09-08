@@ -19,6 +19,9 @@ struct GenericStruct<T, U> {
     second: U,
 }
 
+#[derive(SoAble)]
+struct TupleStruct(u32, f64, String);
+
 #[test]
 fn test_derive_compiles() {
     // If this compiles, the derive macro worked
@@ -58,4 +61,18 @@ fn test_generic_struct() {
     let back = GenericStruct::from_tuple(("world", 2.71));
     assert_eq!(back.first, "world");
     assert_eq!(back.second, 2.71);
+}
+
+#[test]
+fn test_tuple_struct() {
+    use soavec::SoAble;
+
+    let tuple_struct = TupleStruct(7, 3.14, "test".to_string());
+    let tuple = SoAble::into_tuple(tuple_struct);
+    assert_eq!(tuple, (7, 3.14, "test".to_string()));
+
+    let back = TupleStruct::from_tuple((42, 2.71, "hello".to_string()));
+    assert_eq!(back.0, 42);
+    assert_eq!(back.1, 2.71);
+    assert_eq!(back.2, "hello".to_string());
 }
