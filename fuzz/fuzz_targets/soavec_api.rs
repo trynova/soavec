@@ -12,6 +12,22 @@ struct PlainStruct {
     z: i16,
 }
 
+// New struct with custom Drop - only works with Copy types
+#[derive(SoAble, Debug, Clone, PartialEq, Arbitrary)]
+struct CustomDropStruct {
+    counter: u32,
+    flag: bool,
+    value: i64,
+}
+
+impl Drop for CustomDropStruct {
+    fn drop(&mut self) {
+        self.counter = 0;
+        self.flag = false;
+        self.value = -1;
+    }
+}
+
 #[derive(SoAble, Debug, Clone, PartialEq, Arbitrary)]
 struct MixedStruct {
     id: u32,
@@ -41,6 +57,7 @@ struct SoAVecFuzzInput {
     plain_ops: Vec<SoAVecOp<PlainStruct>>,
     mixed_ops: Vec<SoAVecOp<MixedStruct>>,
     heap_only_ops: Vec<SoAVecOp<HeapOnlyStruct>>,
+    custom_drop_ops: Vec<SoAVecOp<CustomDropStruct>>,
 }
 
 fn execute_ops<T: Clone + SoAble>(vec: &mut SoAVec<T>, ops: &[SoAVecOp<T>]) {
@@ -83,4 +100,7 @@ fuzz_target!(|input: SoAVecFuzzInput| {
 
     let mut heap_only_vec: SoAVec<HeapOnlyStruct> = SoAVec::new();
     execute_ops(&mut heap_only_vec, &input.heap_only_ops);
+
+    let mut custom_drop_vec: SoAVec<CustomDropStruct> = SoAVec::new();
+    execute_ops(&mut custom_drop_vec, &input.custom_drop_ops);
 });
