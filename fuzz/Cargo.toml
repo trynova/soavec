@@ -17,8 +17,8 @@ soavec = { path = "../soavec" }
 soavec_derive = { path = "../soavec_derive" }
 
 [[bin]]
-name = "fuzz_target_1"
-path = "fuzz_targets/fuzz_target_1.rs"
+name = "soavec_api"
+path = "fuzz_targets/soavec_api.rs"
 test = false
 doc = false
 bench = false
