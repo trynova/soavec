@@ -76,7 +76,7 @@ use private::Sealed;
 /// `Self::TupleRepr`. Finally, let the `ManuallyDrop<Self>` to go out of scope
 /// without dropping its contents.
 ///
-/// Use `NEEDS_DROP` to indiciate if `Self` needs to be reconstructed for
+/// Use `NEEDS_DROP` to indicate if `Self` needs to be reconstructed for
 /// dropping purposes.
 ///
 /// # Fallibility
