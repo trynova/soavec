@@ -825,13 +825,13 @@ impl<T: SoAble> AsMut<SoAVec<T>> for SoAVec<T> {
 mod tests {
     use core::marker::PhantomData;
 
-    use soavec_derive::SoAble;
-
     use crate as soavec;
     use crate::{SoATuple, SoAVec, SoAble};
 
     #[test]
     fn basic_usage() {
+        use soavec_derive::SoAble;
+
         #[repr(C)]
         #[derive(Debug, Clone, Copy, PartialEq, Eq, SoAble)]
         struct Foo {
@@ -878,6 +878,8 @@ mod tests {
 
     #[test]
     fn basic_usage_with_lifetime() {
+        use soavec_derive::SoAble;
+
         #[repr(C)]
         #[derive(Debug, Clone, Copy, SoAble)]
         struct Foo<'a> {
@@ -919,6 +921,8 @@ mod tests {
 
     #[test]
     fn more_basic_usage() {
+        use soavec_derive::SoAble;
+
         #[repr(C)]
         #[derive(Debug, Clone, Copy, SoAble)]
         struct Bar {
@@ -938,6 +942,8 @@ mod tests {
 
     #[test]
     fn basic_usage_with_bad_alignment() {
+        use soavec_derive::SoAble;
+
         #[repr(C)]
         #[derive(Debug, Clone, Copy, SoAble)]
         struct Foo {
@@ -974,6 +980,8 @@ mod tests {
 
     #[test]
     fn basic_usage_with_zst() {
+        use soavec_derive::SoAble;
+
         #[repr(C)]
         #[derive(Debug, Clone, Copy, SoAble)]
         struct Foo {
@@ -1033,6 +1041,8 @@ mod tests {
 
     #[test]
     fn droppable_types() {
+        use soavec_derive::SoAble;
+
         #[repr(C)]
         #[derive(Debug, Clone, SoAble)]
         struct Foo {

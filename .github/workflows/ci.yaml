@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.ref_name != 'main' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  typos:
+    name: Spellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Spell check
+        uses: crate-ci/typos@master
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2025-05-14
+          components: rustfmt, clippy, llvm-tools-preview, rustc-dev, miri
+      - name: Cache on ${{ github.ref_name }}
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: warm
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Clippy
+        run: |
+          cargo +stable clippy --all-targets -- -D warnings
+          cargo +nightly-2025-05-14 clippy --all-targets --all-features -- -D warnings
+      - name: Miri
+        run: |
+          cargo +nightly-2025-05-14 miri setup
+          cargo +nightly-2025-05-14 miri test --all-features
+
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - name: Cache on ${{ github.ref_name }}
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: warm
+      - name: Check
+        run: cargo check --all-targets
+      - name: Build
+        run: cargo build --tests --bins --examples
+      - name: Test
+        run: cargo test
+        env:
+          RUST_BACKTRACE: 1
