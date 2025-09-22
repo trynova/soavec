@@ -807,6 +807,82 @@ impl<T: SoAble> SoAVec<T> {
         }
     }
 
+    /// Inserts an element at position `index` within the vector, shifting all
+    /// elements after it to the right.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index > len`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use soavec::soavec;
+    ///
+    /// let mut vec = soavec![('a', 'b'), ('c', 'd')].unwrap();
+    /// vec.insert(1, ('x', 'y')).unwrap();
+    /// assert_eq!(vec.len(), 3);
+    /// ```
+    pub fn insert(&mut self, index: u32, element: T) -> Result<(), AllocError> {
+        let _ = self.insert_mut(index, element)?;
+
+        Ok(())
+    }
+
+    /// Inserts an element at position `index` within the vector, shifting all
+    /// elements after it to the right, and returning a reference to the new
+    /// element.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index > len`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use soavec::soavec;
+    ///
+    /// let mut vec = soavec![(1, 1), (3, 3), (5, 5), (7, 7), (9, 9)].unwrap();
+    /// let (mut x1, _) = vec.insert_mut(3, (6, 6)).unwrap();
+    /// *x1 += 1;
+    /// assert_eq!(vec.len(), 6);
+    /// assert_eq!(vec.get(3), Some((&7, &6)));
+    /// ```
+    pub fn insert_mut(&mut self, index: u32, element: T) -> Result<T::Mut<'_>, AllocError> {
+        let len = self.len();
+
+        if index > len {
+            panic!("insertion index (is {index}) should be <= len (is {len})");
+        }
+
+        if len == self.capacity() {
+            // Make sure we have space to one more element.
+            self.buf.reserve(1)?;
+        }
+
+        let ptr = self.buf.as_mut_ptr();
+        let cap = self.capacity();
+
+        unsafe {
+            if index < len {
+                // Shift elements to the right.
+                let src = T::TupleRepr::get_pointers(ptr, index, cap);
+                let dst = T::TupleRepr::get_pointers(ptr, (index) + 1, cap);
+                T::TupleRepr::copy(src, dst, len - (index));
+            }
+
+            // Write the new element.
+            let src = T::into_tuple(element);
+            T::TupleRepr::write(ptr, src, index, cap);
+
+            // Update length.
+            self.buf.set_len(self.len().unchecked_add(1));
+
+            let ptrs = T::TupleRepr::get_pointers(ptr, index, cap);
+            Ok(T::as_mut(PhantomData, ptrs))
+        }
+    }
+
     /// Clears the vector, removing all values.
     ///
     /// Note that this method has no effect on the allocated capacity
@@ -1237,6 +1313,41 @@ mod tests {
         assert_eq!(first.c, &255);
         assert_eq!(first.b, &2);
         assert_eq!(first.a, &0);
+    }
+
+    #[test]
+    fn insert_and_insert_mut() {
+        let mut vec = SoAVec::<(u32, u32)>::new();
+        vec.push((1, 10)).unwrap();
+        vec.push((3, 30)).unwrap();
+
+        let (first, second) = vec.insert_mut(1, (2, 20)).unwrap();
+        *first += 10;
+        *second += 5;
+
+        vec.insert(0, (0, 0)).unwrap();
+
+        let slice = vec.as_slice();
+        assert_eq!(slice.0, &[0, 1, 12, 3]);
+        assert_eq!(slice.1, &[0, 10, 25, 30]);
+    }
+
+    #[test]
+    fn insert_grows_capacity() {
+        let mut vec = SoAVec::<(u32, u32)>::with_capacity(2).unwrap();
+        assert_eq!(vec.capacity(), 2);
+
+        vec.push((1, 10)).unwrap();
+        vec.push((2, 20)).unwrap();
+        assert_eq!(vec.capacity(), 2);
+
+        // Should grow capacity.
+        vec.insert(1, (3, 30)).unwrap();
+        assert!(vec.capacity() >= 3);
+
+        let slice = vec.as_slice();
+        assert_eq!(slice.0, &[1, 3, 2]);
+        assert_eq!(slice.1, &[10, 30, 20]);
     }
 
     #[test]
