@@ -47,6 +47,7 @@ pub fn expand_derive_soable(input: DeriveInput) -> syn::Result<TokenStream> {
     };
 
     let field_types: Vec<_> = fields.iter().map(|f| &f.ty).collect();
+    let field_vis: Vec<_> = fields.iter().map(|f| &f.vis).collect();
 
     let ref_struct_name = quote::format_ident!("{}Ref", struct_name);
     let mut_struct_name = quote::format_ident!("{}Mut", struct_name);
@@ -105,8 +106,9 @@ pub fn expand_derive_soable(input: DeriveInput) -> syn::Result<TokenStream> {
     // Note: use 'soa lifetime name as both more descriptive and less likely to
     // shadow the struct's lifetime.
     let expanded = quote! {
+        #[allow(dead_code)]
         #struct_vis struct #ref_struct_name #helper_generics #combined_where_clause {
-            #(pub #field_names: &'soa #field_types),*
+            #(#field_vis #field_names: &'soa #field_types),*
         }
 
         impl #helper_generics Copy for #ref_struct_name #helper_ty_generics #combined_where_clause {}
@@ -116,12 +118,14 @@ pub fn expand_derive_soable(input: DeriveInput) -> syn::Result<TokenStream> {
             }
         }
 
+        #[allow(dead_code)]
         #struct_vis struct #mut_struct_name #helper_generics #combined_where_clause {
-            #(pub #field_names: &'soa mut #field_types),*
+            #(#field_vis #field_names: &'soa mut #field_types),*
         }
 
+        #[allow(dead_code)]
         #struct_vis struct #slice_struct_name #helper_generics #combined_where_clause {
-            #(pub #field_names: &'soa [#field_types]),*
+            #(#field_vis #field_names: &'soa [#field_types]),*
         }
 
         impl #helper_generics Copy for #slice_struct_name #helper_ty_generics #combined_where_clause {}
@@ -131,8 +135,9 @@ pub fn expand_derive_soable(input: DeriveInput) -> syn::Result<TokenStream> {
             }
         }
 
+        #[allow(dead_code)]
         #struct_vis struct #slice_mut_struct_name #helper_generics #combined_where_clause {
-            #(pub #field_names: &'soa mut [#field_types]),*
+            #(#field_vis #field_names: &'soa mut [#field_types]),*
         }
 
         unsafe impl #impl_generics soavec::SoAble for #struct_name #ty_generics #where_clause {
@@ -325,9 +330,25 @@ mod tests {
         assert!(result.contains("struct TupleStructSlice"));
         assert!(result.contains("struct TupleStructSliceMut"));
 
-        assert!(result.contains("pub _0 : & 'soa u32"));
-        assert!(result.contains("pub _1 : & 'soa f64"));
-        assert!(result.contains("pub _2 : & 'soa String"));
+        assert!(result.contains("_0 : & 'soa u32"));
+        assert!(result.contains("_1 : & 'soa f64"));
+        assert!(result.contains("_2 : & 'soa String"));
+    }
+
+    #[test]
+    fn test_field_visibility_preservation() {
+        let input: DeriveInput = syn::parse_quote! {
+            pub struct MixedVisStruct {
+                pub public_field: u32,
+                private_field: u64,
+            }
+        };
+
+        let result = expand_derive_soable(input).unwrap().to_string();
+
+        assert!(result.contains("pub public_field : & 'soa u32"));
+        assert!(result.contains("private_field : & 'soa u64"));
+        assert!(!result.contains("pub private_field : & 'soa u64"));
     }
 
     #[test]
