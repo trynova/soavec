@@ -64,6 +64,7 @@ mod raw_vec_inner;
 mod soable;
 
 use core::marker::PhantomData;
+use std::ptr::NonNull;
 
 use raw_vec::RawSoAVec;
 use raw_vec_inner::AllocError;
@@ -805,16 +806,39 @@ impl<T: SoAble> SoAVec<T> {
             result
         }
     }
-}
 
-impl<T: SoAble> Drop for SoAVec<T> {
-    fn drop(&mut self) {
+    /// Clears the vector, removing all values.
+    ///
+    /// Note that this method has no effect on the allocated capacity
+    /// of the vector.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use soavec::soavec;
+    ///
+    /// let mut vec = soavec![(1, 1), (2, 2), (3, 3)].unwrap();
+    /// vec.clear();
+    /// assert_eq!(vec.len(), 0);
+    /// ```
+    pub fn clear(&mut self) {
+        let len = self.len();
+        if len == 0 {
+            return;
+        }
+
+        let ptr = self.buf.as_mut_ptr();
+        let cap = self.capacity();
+
+        unsafe {
+            self.buf.set_len(0);
+        };
+        self.drop_in_place(ptr, cap, len);
+    }
+
+    // Drops the items in place without deallocating the buffer.
+    fn drop_in_place(&mut self, ptr: NonNull<u8>, cap: u32, len: u32) {
         if T::MUST_DROP_AS_SELF {
-            // T must be dropped as T; we have to read out each T from the
-            // SoAVec and drop them individually.
-            let ptr = self.buf.as_mut_ptr();
-            let cap = self.buf.capacity();
-            let len = self.len();
             for i in 0..len {
                 // SAFETY: reads each value out without altering the backing
                 // memory; using the backing memory may violate memory safety
@@ -822,16 +846,20 @@ impl<T: SoAble> Drop for SoAVec<T> {
                 let _ = T::from_tuple(unsafe { T::TupleRepr::read(ptr, i, cap) });
             }
         } else if const { core::mem::needs_drop::<T::TupleRepr>() } {
-            // One or more of the slices in TupleRepr need to be dropped but
-            // they can be dropped in place.
-            let ptr = self.buf.as_mut_ptr();
-            let cap = self.buf.capacity();
-            let len = self.len();
             // SAFETY: buffer is still allocated to capacity, contains len
             // items.
             unsafe { T::TupleRepr::drop_in_place(T::TupleRepr::get_pointers(ptr, 0, cap), len) };
         }
-        // RawVec handles deallocation
+    }
+}
+
+impl<T: SoAble> Drop for SoAVec<T> {
+    fn drop(&mut self) {
+        let len = self.len();
+        let cap = self.capacity();
+        let ptr = self.buf.as_mut_ptr();
+        self.drop_in_place(ptr, cap, len);
+        // RawSoAVec's Drop impl deallocates the buffer.
     }
 }
 
@@ -982,6 +1010,195 @@ mod tests {
         assert_eq!(first.a, &0);
         assert_eq!(first.b, &2);
         assert_eq!(first.c, &255);
+    }
+
+    #[test]
+    fn clear_resets_len() {
+        use soavec_derive::SoAble;
+
+        #[repr(C)]
+        #[derive(SoAble)]
+        struct Foo {
+            a: u32,
+            b: u64,
+        }
+
+        let mut foo = SoAVec::<Foo>::with_capacity(5).unwrap();
+        foo.push(Foo { a: 2, b: 0 }).unwrap();
+        assert_eq!(foo.len(), 1);
+
+        foo.clear();
+
+        assert_eq!(foo.len(), 0);
+
+        foo.push(Foo { a: 3, b: 0 }).unwrap();
+        assert_eq!(foo.len(), 1);
+    }
+
+    #[test]
+    fn clear_does_not_change_capacity() {
+        use soavec_derive::SoAble;
+
+        #[repr(C)]
+        #[derive(SoAble)]
+        struct Foo {
+            a: u32,
+            b: u64,
+        }
+
+        let mut foo = SoAVec::<Foo>::with_capacity(5).unwrap();
+        let cap = foo.capacity();
+        foo.push(Foo { a: 2, b: 0 }).unwrap();
+        assert_eq!(foo.len(), 1);
+        assert_eq!(foo.capacity(), cap);
+
+        foo.clear();
+
+        assert_eq!(foo.len(), 0);
+        assert_eq!(foo.capacity(), cap);
+
+        foo.push(Foo { a: 3, b: 0 }).unwrap();
+        assert_eq!(foo.len(), 1);
+        assert_eq!(foo.capacity(), cap);
+    }
+
+    #[test]
+    fn clears_all_elements() {
+        use soavec_derive::SoAble;
+        use std::rc::Rc;
+
+        #[repr(C)]
+        #[derive(Debug, Clone, SoAble)]
+        struct Foo {
+            b: Rc<u32>,
+            a: u64,
+        }
+
+        let rc1 = Rc::new(2u32);
+
+        let mut foo = SoAVec::<Foo>::with_capacity(5).unwrap();
+        foo.push(Foo {
+            b: rc1.clone(),
+            a: 0,
+        })
+        .unwrap();
+
+        // `rc1` is referenced two times. Once in `rc1` and once in `foo`.
+        assert_eq!(Rc::strong_count(&rc1), 2);
+
+        foo.clear();
+
+        assert_eq!(foo.len(), 0);
+        // After clearing, `rc1` should only be referenced once in `rc1`.
+        assert_eq!(Rc::strong_count(&rc1), 1);
+    }
+
+    #[test]
+    fn clears_all_elements_with_droppable() {
+        #[repr(C)]
+        struct LoudDrop {
+            a: (),
+            b: (),
+        }
+
+        static mut DROP_COUNT: usize = 0;
+
+        impl Drop for LoudDrop {
+            fn drop(&mut self) {
+                println!("LoudDrop");
+                // SAFETY: test is entirely single-threaded.
+                unsafe {
+                    DROP_COUNT += 1;
+                }
+            }
+        }
+
+        // SAFETY: No internal invariants on fields.
+        unsafe impl SoAble for LoudDrop {
+            type TupleRepr = ((), ());
+
+            const MUST_DROP_AS_SELF: bool = true;
+
+            type Ref<'a>
+                = (&'a (), &'a ())
+            where
+                Self: 'a;
+
+            type Mut<'a>
+                = (&'a mut (), &'a mut ())
+            where
+                Self: 'a;
+
+            type Slice<'a>
+                = (&'a [()], &'a [()])
+            where
+                Self: 'a;
+
+            type SliceMut<'a>
+                = (&'a mut [()], &'a mut [()])
+            where
+                Self: 'a;
+
+            fn into_tuple(value: Self) -> Self::TupleRepr {
+                core::mem::forget(value);
+                ((), ())
+            }
+
+            fn from_tuple(_value: Self::TupleRepr) -> Self {
+                Self { a: (), b: () }
+            }
+
+            fn as_ref<'a>(
+                _: PhantomData<&'a Self>,
+                value: <Self::TupleRepr as SoATuple>::Pointers,
+            ) -> Self::Ref<'a> {
+                unsafe { (value.0.as_ref(), value.1.as_ref()) }
+            }
+
+            fn as_mut<'a>(
+                _: PhantomData<&'a mut Self>,
+                mut value: <Self::TupleRepr as SoATuple>::Pointers,
+            ) -> Self::Mut<'a> {
+                unsafe { (value.0.as_mut(), value.1.as_mut()) }
+            }
+
+            fn as_slice<'a>(
+                _: PhantomData<&'a Self>,
+                value: <Self::TupleRepr as SoATuple>::Pointers,
+                len: u32,
+            ) -> Self::Slice<'a> {
+                unsafe {
+                    (
+                        core::slice::from_raw_parts(value.0.as_ptr(), len as usize),
+                        core::slice::from_raw_parts(value.1.as_ptr(), len as usize),
+                    )
+                }
+            }
+
+            fn as_mut_slice<'a>(
+                _: PhantomData<&'a mut Self>,
+                value: <Self::TupleRepr as SoATuple>::Pointers,
+                len: u32,
+            ) -> Self::SliceMut<'a> {
+                unsafe {
+                    (
+                        core::slice::from_raw_parts_mut(value.0.as_ptr(), len as usize),
+                        core::slice::from_raw_parts_mut(value.1.as_ptr(), len as usize),
+                    )
+                }
+            }
+        }
+
+        let mut foo = SoAVec::<LoudDrop>::with_capacity(16).unwrap();
+        foo.push(LoudDrop { a: (), b: () }).unwrap();
+        foo.push(LoudDrop { a: (), b: () }).unwrap();
+
+        assert_eq!(foo.len(), 2);
+
+        foo.clear();
+
+        assert_eq!(foo.len(), 0);
+        assert_eq!(unsafe { DROP_COUNT }, 2);
     }
 
     #[test]
