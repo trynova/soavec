@@ -106,6 +106,7 @@ pub fn expand_derive_soable(input: DeriveInput) -> syn::Result<TokenStream> {
     // Note: use 'soa lifetime name as both more descriptive and less likely to
     // shadow the struct's lifetime.
     let expanded = quote! {
+        #[allow(dead_code)]
         #struct_vis struct #ref_struct_name #helper_generics #combined_where_clause {
             #(#field_vis #field_names: &'soa #field_types),*
         }
@@ -117,10 +118,12 @@ pub fn expand_derive_soable(input: DeriveInput) -> syn::Result<TokenStream> {
             }
         }
 
+        #[allow(dead_code)]
         #struct_vis struct #mut_struct_name #helper_generics #combined_where_clause {
             #(#field_vis #field_names: &'soa mut #field_types),*
         }
 
+        #[allow(dead_code)]
         #struct_vis struct #slice_struct_name #helper_generics #combined_where_clause {
             #(#field_vis #field_names: &'soa [#field_types]),*
         }
@@ -132,6 +135,7 @@ pub fn expand_derive_soable(input: DeriveInput) -> syn::Result<TokenStream> {
             }
         }
 
+        #[allow(dead_code)]
         #struct_vis struct #slice_mut_struct_name #helper_generics #combined_where_clause {
             #(#field_vis #field_names: &'soa mut [#field_types]),*
         }
