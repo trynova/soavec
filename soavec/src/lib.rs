@@ -761,6 +761,50 @@ impl<T: SoAble> SoAVec<T> {
         // All item are processed. This can be optimized to `set_len` by LLVM.
         drop(g);
     }
+
+    /// Removes and returns the element at position `index` within the vector,
+    /// shifting all elements after it to the left.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index` is out of bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use soavec::soavec;
+    ///
+    /// let mut v = soavec![('a', 'a'), ('b', 'b'), ('c', 'c')].unwrap();
+    /// assert_eq!(v.remove(1), ('b', 'b'));
+    /// assert_eq!(v.len(), 2);
+    /// ```
+    pub fn remove(&mut self, index: u32) -> T {
+        let len = self.len();
+
+        if index >= len {
+            panic!("removal index (is {index}) should be < len (is {len})");
+        }
+
+        let cap = self.buf.capacity();
+        let ptr = self.buf.as_ptr();
+
+        unsafe {
+            // Read the value out before we overwrite its memory.
+            let result = T::from_tuple(T::TupleRepr::read(ptr, index, cap));
+            // Shift down everything after it.
+            if index < len - 1 {
+                T::TupleRepr::copy(
+                    T::TupleRepr::get_pointers(ptr, index + 1, cap),
+                    T::TupleRepr::get_pointers(ptr, index, cap),
+                    len - index - 1,
+                );
+            }
+            // Update the length.
+            self.buf.set_len(len - 1);
+
+            result
+        }
+    }
 }
 
 impl<T: SoAble> Drop for SoAVec<T> {
@@ -1195,5 +1239,28 @@ mod tests {
             1,
             "should have dropped a single LoudDrop item"
         );
+    }
+
+    #[test]
+    fn remove_at_index() {
+        use soavec_derive::SoAble;
+
+        #[repr(C)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, SoAble)]
+        struct Foo {
+            a: u64,
+            b: u32,
+        }
+
+        let mut foo = SoAVec::<Foo>::with_capacity(16).unwrap();
+        for i in 0..10 {
+            foo.push(Foo { a: i, b: i as u32 }).unwrap()
+        }
+
+        assert_eq!(foo.len(), 10);
+
+        let removed = foo.remove(4);
+        assert_eq!(removed, Foo { a: 4, b: 4 });
+        assert_eq!(foo.len(), 9);
     }
 }
