@@ -282,6 +282,29 @@ pub struct SoAVec<T: SoAble> {
     buf: RawSoAVec<T>,
 }
 
+/// The error type for when an index is out of bounds.
+#[derive(Clone, Debug)]
+pub struct IndexOutOfBoundsError;
+
+/// A union of possible errors that can occur when inserting into a `SoAVec`.
+#[derive(Clone, Debug)]
+pub enum InsertError {
+    IndexOutOfBounds(IndexOutOfBoundsError),
+    AllocError(AllocError),
+}
+
+impl From<IndexOutOfBoundsError> for InsertError {
+    fn from(e: IndexOutOfBoundsError) -> Self {
+        InsertError::IndexOutOfBounds(e)
+    }
+}
+
+impl From<AllocError> for InsertError {
+    fn from(e: AllocError) -> Self {
+        InsertError::AllocError(e)
+    }
+}
+
 impl<T: SoAble> SoAVec<T> {
     pub fn new() -> Self {
         SoAVec {
@@ -766,24 +789,24 @@ impl<T: SoAble> SoAVec<T> {
     /// Removes and returns the element at position `index` within the vector,
     /// shifting all elements after it to the left.
     ///
-    /// # Panics
-    ///
-    /// Panics if `index` is out of bounds.
-    ///
     /// # Examples
     ///
     /// ```
     /// use soavec::soavec;
     ///
     /// let mut v = soavec![('a', 'a'), ('b', 'b'), ('c', 'c')].unwrap();
-    /// assert_eq!(v.remove(1), ('b', 'b'));
+    /// assert_eq!(v.remove(1).unwrap(), ('b', 'b'));
     /// assert_eq!(v.len(), 2);
     /// ```
-    pub fn remove(&mut self, index: u32) -> T {
-        let len = self.len();
+    pub fn remove(&mut self, index: u32) -> Result<T, InsertError> {
+        #[cold]
+        fn assert_index() -> IndexOutOfBoundsError {
+            IndexOutOfBoundsError
+        }
 
+        let len = self.len();
         if index >= len {
-            panic!("removal index (is {index}) should be < len (is {len})");
+            return Err(assert_index().into());
         }
 
         let cap = self.buf.capacity();
@@ -803,16 +826,12 @@ impl<T: SoAble> SoAVec<T> {
             // Update the length.
             self.buf.set_len(len - 1);
 
-            result
+            Ok(result)
         }
     }
 
     /// Inserts an element at position `index` within the vector, shifting all
     /// elements after it to the right.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `index > len`.
     ///
     /// # Examples
     ///
@@ -823,8 +842,8 @@ impl<T: SoAble> SoAVec<T> {
     /// vec.insert(1, ('x', 'y')).unwrap();
     /// assert_eq!(vec.len(), 3);
     /// ```
-    pub fn insert(&mut self, index: u32, element: T) -> Result<(), AllocError> {
-        let _ = self.insert_mut(index, element)?;
+    pub fn insert(&mut self, index: u32, element: T) -> Result<(), InsertError> {
+        self.insert_mut(index, element)?;
 
         Ok(())
     }
@@ -832,10 +851,6 @@ impl<T: SoAble> SoAVec<T> {
     /// Inserts an element at position `index` within the vector, shifting all
     /// elements after it to the right, and returning a reference to the new
     /// element.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `index > len`.
     ///
     /// # Examples
     ///
@@ -848,11 +863,15 @@ impl<T: SoAble> SoAVec<T> {
     /// assert_eq!(vec.len(), 6);
     /// assert_eq!(vec.get(3), Some((&7, &6)));
     /// ```
-    pub fn insert_mut(&mut self, index: u32, element: T) -> Result<T::Mut<'_>, AllocError> {
-        let len = self.len();
+    pub fn insert_mut(&mut self, index: u32, element: T) -> Result<T::Mut<'_>, InsertError> {
+        #[cold]
+        fn assert_index() -> IndexOutOfBoundsError {
+            IndexOutOfBoundsError
+        }
 
+        let len = self.len();
         if index > len {
-            panic!("insertion index (is {index}) should be <= len (is {len})");
+            return Err(assert_index().into());
         }
 
         if len == self.capacity() {
@@ -876,7 +895,7 @@ impl<T: SoAble> SoAVec<T> {
             T::TupleRepr::write(ptr, src, index, cap);
 
             // Update length.
-            self.buf.set_len(self.len().unchecked_add(1));
+            self.buf.set_len(len + 1);
 
             let ptrs = T::TupleRepr::get_pointers(ptr, index, cap);
             Ok(T::as_mut(PhantomData, ptrs))
@@ -1587,7 +1606,7 @@ mod tests {
 
         assert_eq!(foo.len(), 10);
 
-        let removed = foo.remove(4);
+        let removed = foo.remove(4).unwrap();
         assert_eq!(removed, Foo { a: 4, b: 4 });
         assert_eq!(foo.len(), 9);
     }
