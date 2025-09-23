@@ -22,6 +22,13 @@ struct GenericStruct<T, U> {
 #[derive(SoAble)]
 struct TupleStruct(u32, f64, String);
 
+#[derive(SoAble)]
+struct StructWithLen {
+    a: usize,
+    // `len` should not overwrite in the macro
+    len: usize,
+}
+
 #[test]
 fn test_derive_compiles() {
     // If this compiles, the derive macro worked
@@ -75,4 +82,17 @@ fn test_tuple_struct() {
     assert_eq!(back.0, 42);
     assert_eq!(back.1, 2.71);
     assert_eq!(back.2, "hello".to_string());
+}
+
+#[test]
+fn test_struct_with_len_field() {
+    use soavec::SoAble;
+
+    let value = StructWithLen { a: 5, len: 8 };
+    let tuple = SoAble::into_tuple(value);
+    assert_eq!(tuple, (5, 8));
+
+    let back = StructWithLen::from_tuple((9, 12));
+    assert_eq!(back.a, 9);
+    assert_eq!(back.len, 12);
 }

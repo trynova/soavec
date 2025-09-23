@@ -186,11 +186,11 @@ pub fn expand_derive_soable(input: DeriveInput) -> syn::Result<TokenStream> {
                 value: <Self::TupleRepr as soavec::SoATuple>::Pointers,
                 len: u32,
             ) -> Self::Slice<'soa> {
-                let len = len as usize;
+                let __soa_len = len as usize;
                 let (#(#field_names),*) = value;
                 unsafe {
                     #slice_struct_name {
-                        #(#field_names: core::slice::from_raw_parts(#field_names.as_ptr(), len)),*
+                        #(#field_names: core::slice::from_raw_parts(#field_names.as_ptr(), __soa_len)),*
                     }
                 }
             }
@@ -200,11 +200,11 @@ pub fn expand_derive_soable(input: DeriveInput) -> syn::Result<TokenStream> {
                 value: <Self::TupleRepr as soavec::SoATuple>::Pointers,
                 len: u32,
             ) -> Self::SliceMut<'soa> {
-                let len = len as usize;
+                let __soa_len = len as usize;
                 let (#(#field_names),*) = value;
                 unsafe {
                     #slice_mut_struct_name {
-                        #(#field_names: core::slice::from_raw_parts_mut(#field_names.as_ptr(), len)),*
+                        #(#field_names: core::slice::from_raw_parts_mut(#field_names.as_ptr(), __soa_len)),*
                     }
                 }
             }
