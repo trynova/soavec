@@ -500,6 +500,62 @@ impl<T: SoAble> SoAVec<T> {
         Ok(())
     }
 
+    /// Moves all the elements of `other` into `self`, leaving `other` empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the new capacity exceeds `isize::MAX` _bytes_.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use soavec::soavec;
+    ///
+    /// let mut vec1 = soavec![(1, 1), (2, 2)].unwrap();
+    /// let mut vec2 = soavec![(3, 3), (4, 4)].unwrap();
+    ///
+    /// vec1.append(&mut vec2).unwrap();
+    ///
+    /// assert_eq!(vec1.len(), 4);
+    /// assert_eq!(vec2.len(), 0);
+    /// assert_eq!(vec1.get(0), Some((&1, &1)));
+    /// assert_eq!(vec1.get(1), Some((&2, &2)));
+    /// assert_eq!(vec1.get(2), Some((&3, &3)));
+    /// assert_eq!(vec1.get(3), Some((&4, &4)));
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// Takes *O*(*other.len() \* number_of_fields*) time.
+    pub fn append(&mut self, other: &mut Self) -> Result<(), AllocError> {
+        let other_len = other.len();
+        if other_len == 0 {
+            return Ok(());
+        }
+
+        // Reserve space for the additional elements
+        self.reserve(other_len)?;
+
+        let self_len = self.len();
+        let self_cap = self.capacity();
+        let other_cap = other.capacity();
+
+        // SAFETY: We reserved enough space, so we have capacity for other_len more elements
+        unsafe {
+            T::TupleRepr::copy(
+                T::TupleRepr::get_pointers(other.buf.as_ptr(), 0, other_cap),
+                T::TupleRepr::get_pointers(self.buf.as_mut_ptr(), self_len, self_cap),
+                other_len,
+            );
+
+            self.buf.set_len(self_len + other_len);
+
+            other.buf.set_len(0);
+        }
+
+        Ok(())
+    }
+
     /// Removes the last element from a SoA vector and returns it, or [`None`]
     /// if it is empty.
     ///
@@ -1609,5 +1665,165 @@ mod tests {
         let removed = foo.remove(4).unwrap();
         assert_eq!(removed, Foo { a: 4, b: 4 });
         assert_eq!(foo.len(), 9);
+    }
+
+    #[test]
+    fn append_basic() {
+        use soavec_derive::SoAble;
+
+        #[repr(C)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, SoAble)]
+        struct Foo {
+            a: u64,
+            b: u32,
+        }
+
+        let mut vec1 = SoAVec::<Foo>::with_capacity(10).unwrap();
+        vec1.push(Foo { a: 1, b: 2 }).unwrap();
+        vec1.push(Foo { a: 3, b: 4 }).unwrap();
+
+        let mut vec2 = SoAVec::<Foo>::with_capacity(10).unwrap();
+        vec2.push(Foo { a: 5, b: 6 }).unwrap();
+        vec2.push(Foo { a: 7, b: 8 }).unwrap();
+        vec2.push(Foo { a: 9, b: 10 }).unwrap();
+
+        let vec2_cap = vec2.capacity();
+
+        vec1.append(&mut vec2).unwrap();
+
+        assert_eq!(vec1.len(), 5);
+        assert_eq!(vec2.len(), 0);
+        assert!(vec2.is_empty());
+        assert_eq!(vec2.capacity(), vec2_cap);
+
+        let elem0 = vec1.get(0).unwrap();
+        assert_eq!(elem0.a, &1);
+        assert_eq!(elem0.b, &2);
+
+        let elem1 = vec1.get(1).unwrap();
+        assert_eq!(elem1.a, &3);
+        assert_eq!(elem1.b, &4);
+
+        let elem2 = vec1.get(2).unwrap();
+        assert_eq!(elem2.a, &5);
+        assert_eq!(elem2.b, &6);
+
+        let elem3 = vec1.get(3).unwrap();
+        assert_eq!(elem3.a, &7);
+        assert_eq!(elem3.b, &8);
+
+        let elem4 = vec1.get(4).unwrap();
+        assert_eq!(elem4.a, &9);
+        assert_eq!(elem4.b, &10);
+    }
+
+    #[test]
+    fn append_empty_to_non_empty() {
+        use soavec_derive::SoAble;
+
+        #[repr(C)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, SoAble)]
+        struct Foo {
+            a: u32,
+            b: u64,
+        }
+
+        let mut vec1 = SoAVec::<Foo>::new();
+        vec1.push(Foo { a: 1, b: 2 }).unwrap();
+
+        let mut vec2 = SoAVec::<Foo>::new();
+
+        vec1.append(&mut vec2).unwrap();
+
+        assert_eq!(vec1.len(), 1);
+        assert_eq!(vec2.len(), 0);
+
+        let elem0 = vec1.get(0).unwrap();
+        assert_eq!(elem0.a, &1);
+        assert_eq!(elem0.b, &2);
+    }
+
+    #[test]
+    fn append_non_empty_to_empty() {
+        use soavec_derive::SoAble;
+
+        #[repr(C)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, SoAble)]
+        struct Foo {
+            a: u32,
+            b: u64,
+        }
+
+        let mut vec1 = SoAVec::<Foo>::new();
+
+        let mut vec2 = SoAVec::<Foo>::new();
+        vec2.push(Foo { a: 1, b: 2 }).unwrap();
+        vec2.push(Foo { a: 3, b: 4 }).unwrap();
+
+        vec1.append(&mut vec2).unwrap();
+
+        assert_eq!(vec1.len(), 2);
+        assert_eq!(vec2.len(), 0);
+
+        let elem0 = vec1.get(0).unwrap();
+        assert_eq!(elem0.a, &1);
+        assert_eq!(elem0.b, &2);
+
+        let elem1 = vec1.get(1).unwrap();
+        assert_eq!(elem1.a, &3);
+        assert_eq!(elem1.b, &4);
+    }
+
+    #[test]
+    fn append_with_droppable_types() {
+        use soavec_derive::SoAble;
+        use std::rc::Rc;
+
+        #[repr(C)]
+        #[derive(Debug, Clone, SoAble)]
+        struct Foo {
+            a: Rc<u64>,
+            b: Vec<u32>,
+        }
+
+        let mut vec1 = SoAVec::<Foo>::new();
+        vec1.push(Foo {
+            a: Rc::new(42),
+            b: vec![1, 2, 3],
+        })
+        .unwrap();
+
+        let mut vec2 = SoAVec::<Foo>::new();
+        let shared_rc = Rc::new(84);
+        vec2.push(Foo {
+            a: shared_rc.clone(),
+            b: vec![4, 5],
+        })
+        .unwrap();
+        vec2.push(Foo {
+            a: Rc::new(168),
+            b: vec![6],
+        })
+        .unwrap();
+
+        assert_eq!(Rc::strong_count(&shared_rc), 2);
+
+        vec1.append(&mut vec2).unwrap();
+
+        assert_eq!(vec1.len(), 3);
+        assert_eq!(vec2.len(), 0);
+        assert_eq!(Rc::strong_count(&shared_rc), 2);
+
+        let first = vec1.get(0).unwrap();
+        assert_eq!(**first.a, 42);
+        assert_eq!(first.b, &[1, 2, 3]);
+
+        let second = vec1.get(1).unwrap();
+        assert_eq!(**second.a, 84);
+        assert_eq!(second.b, &[4, 5]);
+
+        let third = vec1.get(2).unwrap();
+        assert_eq!(**third.a, 168);
+        assert_eq!(third.b, &[6]);
     }
 }
