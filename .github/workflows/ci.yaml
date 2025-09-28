@@ -29,7 +29,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Install Rust toolchain
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Install Rust nightly toolchain
         uses: dtolnay/rust-toolchain@nightly
         with:
           toolchain: nightly-2025-05-14
