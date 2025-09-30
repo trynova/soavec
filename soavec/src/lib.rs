@@ -1014,6 +1014,23 @@ impl<T: SoAble> Drop for SoAVec<T> {
     }
 }
 
+impl<T> PartialEq for SoAVec<T>
+where
+    T: SoAble,
+    for<'a> T::Slice<'a>: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.as_slice() == other.as_slice()
+    }
+}
+
+impl<T> Eq for SoAVec<T>
+where
+    T: SoAble,
+    for<'a> T::Slice<'a>: Eq,
+{
+}
+
 impl<T: SoAble> core::default::Default for SoAVec<T> {
     #[inline(always)]
     fn default() -> Self {
