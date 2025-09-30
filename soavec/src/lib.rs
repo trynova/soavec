@@ -282,6 +282,29 @@ pub struct SoAVec<T: SoAble> {
     buf: RawSoAVec<T>,
 }
 
+/// The error type for when an index is out of bounds.
+#[derive(Clone, Debug)]
+pub struct IndexOutOfBoundsError;
+
+/// A union of possible errors that can occur when inserting into a `SoAVec`.
+#[derive(Clone, Debug)]
+pub enum InsertError {
+    IndexOutOfBounds(IndexOutOfBoundsError),
+    AllocError(AllocError),
+}
+
+impl From<IndexOutOfBoundsError> for InsertError {
+    fn from(e: IndexOutOfBoundsError) -> Self {
+        InsertError::IndexOutOfBounds(e)
+    }
+}
+
+impl From<AllocError> for InsertError {
+    fn from(e: AllocError) -> Self {
+        InsertError::AllocError(e)
+    }
+}
+
 impl<T: SoAble> SoAVec<T> {
     pub fn new() -> Self {
         SoAVec {
@@ -766,24 +789,24 @@ impl<T: SoAble> SoAVec<T> {
     /// Removes and returns the element at position `index` within the vector,
     /// shifting all elements after it to the left.
     ///
-    /// # Panics
-    ///
-    /// Panics if `index` is out of bounds.
-    ///
     /// # Examples
     ///
     /// ```
     /// use soavec::soavec;
     ///
     /// let mut v = soavec![('a', 'a'), ('b', 'b'), ('c', 'c')].unwrap();
-    /// assert_eq!(v.remove(1), ('b', 'b'));
+    /// assert_eq!(v.remove(1).unwrap(), ('b', 'b'));
     /// assert_eq!(v.len(), 2);
     /// ```
-    pub fn remove(&mut self, index: u32) -> T {
-        let len = self.len();
+    pub fn remove(&mut self, index: u32) -> Result<T, InsertError> {
+        #[cold]
+        fn assert_index() -> IndexOutOfBoundsError {
+            IndexOutOfBoundsError
+        }
 
+        let len = self.len();
         if index >= len {
-            panic!("removal index (is {index}) should be < len (is {len})");
+            return Err(assert_index().into());
         }
 
         let cap = self.buf.capacity();
@@ -803,7 +826,79 @@ impl<T: SoAble> SoAVec<T> {
             // Update the length.
             self.buf.set_len(len - 1);
 
-            result
+            Ok(result)
+        }
+    }
+
+    /// Inserts an element at position `index` within the vector, shifting all
+    /// elements after it to the right.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use soavec::soavec;
+    ///
+    /// let mut vec = soavec![('a', 'b'), ('c', 'd')].unwrap();
+    /// vec.insert(1, ('x', 'y')).unwrap();
+    /// assert_eq!(vec.len(), 3);
+    /// ```
+    pub fn insert(&mut self, index: u32, element: T) -> Result<(), InsertError> {
+        self.insert_mut(index, element)?;
+
+        Ok(())
+    }
+
+    /// Inserts an element at position `index` within the vector, shifting all
+    /// elements after it to the right, and returning a reference to the new
+    /// element.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use soavec::soavec;
+    ///
+    /// let mut vec = soavec![(1, 1), (3, 3), (5, 5), (7, 7), (9, 9)].unwrap();
+    /// let (mut x1, _) = vec.insert_mut(3, (6, 6)).unwrap();
+    /// *x1 += 1;
+    /// assert_eq!(vec.len(), 6);
+    /// assert_eq!(vec.get(3), Some((&7, &6)));
+    /// ```
+    pub fn insert_mut(&mut self, index: u32, element: T) -> Result<T::Mut<'_>, InsertError> {
+        #[cold]
+        fn assert_index() -> IndexOutOfBoundsError {
+            IndexOutOfBoundsError
+        }
+
+        let len = self.len();
+        if index > len {
+            return Err(assert_index().into());
+        }
+
+        if len == self.capacity() {
+            // Make sure we have space to one more element.
+            self.buf.reserve(1)?;
+        }
+
+        let ptr = self.buf.as_mut_ptr();
+        let cap = self.capacity();
+
+        unsafe {
+            if index < len {
+                // Shift elements to the right.
+                let src = T::TupleRepr::get_pointers(ptr, index, cap);
+                let dst = T::TupleRepr::get_pointers(ptr, (index) + 1, cap);
+                T::TupleRepr::copy(src, dst, len - (index));
+            }
+
+            // Write the new element.
+            let src = T::into_tuple(element);
+            T::TupleRepr::write(ptr, src, index, cap);
+
+            // Update length.
+            self.buf.set_len(len + 1);
+
+            let ptrs = T::TupleRepr::get_pointers(ptr, index, cap);
+            Ok(T::as_mut(PhantomData, ptrs))
         }
     }
 
@@ -1240,6 +1335,41 @@ mod tests {
     }
 
     #[test]
+    fn insert_and_insert_mut() {
+        let mut vec = SoAVec::<(u32, u32)>::new();
+        vec.push((1, 10)).unwrap();
+        vec.push((3, 30)).unwrap();
+
+        let (first, second) = vec.insert_mut(1, (2, 20)).unwrap();
+        *first += 10;
+        *second += 5;
+
+        vec.insert(0, (0, 0)).unwrap();
+
+        let slice = vec.as_slice();
+        assert_eq!(slice.0, &[0, 1, 12, 3]);
+        assert_eq!(slice.1, &[0, 10, 25, 30]);
+    }
+
+    #[test]
+    fn insert_grows_capacity() {
+        let mut vec = SoAVec::<(u32, u32)>::with_capacity(2).unwrap();
+        assert_eq!(vec.capacity(), 2);
+
+        vec.push((1, 10)).unwrap();
+        vec.push((2, 20)).unwrap();
+        assert_eq!(vec.capacity(), 2);
+
+        // Should grow capacity.
+        vec.insert(1, (3, 30)).unwrap();
+        assert!(vec.capacity() >= 3);
+
+        let slice = vec.as_slice();
+        assert_eq!(slice.0, &[1, 3, 2]);
+        assert_eq!(slice.1, &[10, 30, 20]);
+    }
+
+    #[test]
     fn basic_usage_with_zst() {
         use soavec_derive::SoAble;
 
@@ -1476,7 +1606,7 @@ mod tests {
 
         assert_eq!(foo.len(), 10);
 
-        let removed = foo.remove(4);
+        let removed = foo.remove(4).unwrap();
         assert_eq!(removed, Foo { a: 4, b: 4 });
         assert_eq!(foo.len(), 9);
     }
