@@ -556,6 +556,70 @@ impl<T: SoAble> SoAVec<T> {
         Ok(())
     }
 
+    /// Copies all elements from a slice and appends them to the `SoAVec`.
+    ///
+    /// Iterates over the slice, cloning each element and appending it to this
+    /// `SoAVec`. The slice is in Array-of-Structs format and will be transposed
+    /// into the Struct-of-Arrays layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the new capacity exceeds `isize::MAX` _bytes_.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use soavec::soavec;
+    ///
+    /// let mut vec = soavec![(1, 1), (2, 2)].unwrap();
+    /// vec.extend_from_slice(&[(3, 3), (4, 4)]).unwrap();
+    ///
+    /// assert_eq!(vec.len(), 4);
+    /// assert_eq!(vec.get(0), Some((&1, &1)));
+    /// assert_eq!(vec.get(1), Some((&2, &2)));
+    /// assert_eq!(vec.get(2), Some((&3, &3)));
+    /// assert_eq!(vec.get(3), Some((&4, &4)));
+    /// ```
+    ///
+    /// # Time complexity
+    ///
+    /// Takes *O*(*slice.len()*) time.
+    pub fn extend_from_slice(&mut self, slice: &[T]) -> Result<(), AllocError>
+    where
+        T: Clone,
+    {
+        let slice_len = slice.len() as u32;
+        if slice_len == 0 {
+            return Ok(());
+        }
+
+        // Reserve space for the additional elements
+        self.reserve(slice_len)?;
+
+        let mut self_len = self.len();
+        let self_cap = self.capacity();
+
+        // SAFETY: We reserved enough space, so we have capacity for slice_len more elements
+        for item in slice.iter() {
+            unsafe {
+                T::TupleRepr::write(
+                    self.buf.as_mut_ptr(),
+                    T::into_tuple(item.clone()),
+                    self_len,
+                    self_cap,
+                );
+            }
+            self_len += 1;
+        }
+
+        // SAFETY: We wrote exactly slice_len elements
+        unsafe {
+            self.buf.set_len(self_len);
+        }
+
+        Ok(())
+    }
+
     /// Removes the last element from a SoA vector and returns it, or [`None`]
     /// if it is empty.
     ///
@@ -1840,6 +1904,149 @@ mod tests {
         assert_eq!(second.b, &[4, 5]);
 
         let third = vec1.get(2).unwrap();
+        assert_eq!(**third.a, 168);
+        assert_eq!(third.b, &[6]);
+    }
+
+    #[test]
+    fn extend_from_slice_basic() {
+        use soavec_derive::SoAble;
+
+        #[repr(C)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, SoAble)]
+        struct Foo {
+            a: u64,
+            b: u32,
+        }
+
+        let mut vec = SoAVec::<Foo>::new();
+        vec.push(Foo { a: 1, b: 2 }).unwrap();
+        vec.push(Foo { a: 3, b: 4 }).unwrap();
+
+        let slice = &[Foo { a: 5, b: 6 }, Foo { a: 7, b: 8 }, Foo { a: 9, b: 10 }];
+        vec.extend_from_slice(slice).unwrap();
+
+        assert_eq!(vec.len(), 5);
+
+        let elem0 = vec.get(0).unwrap();
+        assert_eq!(elem0.a, &1);
+        assert_eq!(elem0.b, &2);
+
+        let elem1 = vec.get(1).unwrap();
+        assert_eq!(elem1.a, &3);
+        assert_eq!(elem1.b, &4);
+
+        let elem2 = vec.get(2).unwrap();
+        assert_eq!(elem2.a, &5);
+        assert_eq!(elem2.b, &6);
+
+        let elem3 = vec.get(3).unwrap();
+        assert_eq!(elem3.a, &7);
+        assert_eq!(elem3.b, &8);
+
+        let elem4 = vec.get(4).unwrap();
+        assert_eq!(elem4.a, &9);
+        assert_eq!(elem4.b, &10);
+    }
+
+    #[test]
+    fn extend_from_slice_empty() {
+        use soavec_derive::SoAble;
+
+        #[repr(C)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, SoAble)]
+        struct Foo {
+            a: u32,
+            b: u64,
+        }
+
+        let mut vec = SoAVec::<Foo>::new();
+        vec.push(Foo { a: 1, b: 2 }).unwrap();
+
+        let empty_slice: &[Foo] = &[];
+        vec.extend_from_slice(empty_slice).unwrap();
+
+        assert_eq!(vec.len(), 1);
+
+        let elem0 = vec.get(0).unwrap();
+        assert_eq!(elem0.a, &1);
+        assert_eq!(elem0.b, &2);
+    }
+
+    #[test]
+    fn extend_from_slice_to_empty() {
+        use soavec_derive::SoAble;
+
+        #[repr(C)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, SoAble)]
+        struct Foo {
+            a: u32,
+            b: u64,
+        }
+
+        let mut vec = SoAVec::<Foo>::new();
+
+        let slice = &[Foo { a: 1, b: 2 }, Foo { a: 3, b: 4 }];
+        vec.extend_from_slice(slice).unwrap();
+
+        assert_eq!(vec.len(), 2);
+
+        let elem0 = vec.get(0).unwrap();
+        assert_eq!(elem0.a, &1);
+        assert_eq!(elem0.b, &2);
+
+        let elem1 = vec.get(1).unwrap();
+        assert_eq!(elem1.a, &3);
+        assert_eq!(elem1.b, &4);
+    }
+
+    #[test]
+    fn extend_from_slice_with_droppable_types() {
+        use soavec_derive::SoAble;
+        use std::rc::Rc;
+
+        #[repr(C)]
+        #[derive(Debug, Clone, SoAble)]
+        struct Foo {
+            a: Rc<u64>,
+            b: Vec<u32>,
+        }
+
+        let mut vec = SoAVec::<Foo>::new();
+        vec.push(Foo {
+            a: Rc::new(42),
+            b: vec![1, 2, 3],
+        })
+        .unwrap();
+
+        let shared_rc = Rc::new(84);
+        let slice = &[
+            Foo {
+                a: shared_rc.clone(),
+                b: vec![4, 5],
+            },
+            Foo {
+                a: Rc::new(168),
+                b: vec![6],
+            },
+        ];
+
+        assert_eq!(Rc::strong_count(&shared_rc), 2);
+
+        vec.extend_from_slice(slice).unwrap();
+
+        assert_eq!(vec.len(), 3);
+        assert_eq!(Rc::strong_count(&shared_rc), 3); // original + slice + vec
+
+        let first = vec.get(0).unwrap();
+        assert_eq!(**first.a, 42);
+        assert_eq!(first.b, &[1, 2, 3]);
+
+        let second = vec.get(1).unwrap();
+        assert_eq!(**second.a, 84);
+        assert_eq!(second.b, &[4, 5]);
+
+        let third = vec.get(2).unwrap();
         assert_eq!(**third.a, 168);
         assert_eq!(third.b, &[6]);
     }
