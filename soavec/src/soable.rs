@@ -112,7 +112,7 @@ pub unsafe trait SoAble: Sized {
     /// # Examples
     ///
     /// A simple struct containing fields that required drop themselves but are
-    /// not indvidually split up in the Struct-of-Arrays format can be dropped
+    /// not individually split up in the Struct-of-Arrays format can be dropped
     /// directly in the Struct-of-Arrays format.
     ///
     /// ```rust,ignore
