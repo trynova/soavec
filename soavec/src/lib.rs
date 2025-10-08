@@ -919,14 +919,9 @@ impl<T: SoAble> SoAVec<T> {
     /// assert_eq!(v.len(), 2);
     /// ```
     pub fn remove(&mut self, index: u32) -> Result<T, InsertError> {
-        #[cold]
-        fn assert_index() -> IndexOutOfBoundsError {
-            IndexOutOfBoundsError
-        }
-
         let len = self.len();
         if index >= len {
-            return Err(assert_index().into());
+            return Err(IndexOutOfBoundsError.into());
         }
 
         let cap = self.buf.capacity();
@@ -984,14 +979,9 @@ impl<T: SoAble> SoAVec<T> {
     /// assert_eq!(vec.get(3), Some((&7, &6)));
     /// ```
     pub fn insert_mut(&mut self, index: u32, element: T) -> Result<T::Mut<'_>, InsertError> {
-        #[cold]
-        fn assert_index() -> IndexOutOfBoundsError {
-            IndexOutOfBoundsError
-        }
-
         let len = self.len();
         if index > len {
-            return Err(assert_index().into());
+            return Err(IndexOutOfBoundsError.into());
         }
 
         if len == self.capacity() {
@@ -1064,6 +1054,50 @@ impl<T: SoAble> SoAVec<T> {
             // SAFETY: buffer is still allocated to capacity, contains len
             // items.
             unsafe { T::TupleRepr::drop_in_place(T::TupleRepr::get_pointers(ptr, 0, cap), len) };
+        }
+    }
+
+    /// Removes an element from the vector and returns it.
+    ///
+    /// The removed element is replaced by the last element of the vector.
+    ///
+    /// This does not preserve ordering of the remaining elements, but is *O*(n_fields).
+    /// If you need to preserve the element order, use [`remove`] instead.
+    ///
+    /// [`remove`]: SoAVec::remove
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use soavec::soavec;
+    ///
+    /// let mut v = soavec![("foo", "foo"), ("bar", "bar"), ("baz", "baz"), ("qux", "qux")].unwrap();
+    ///
+    /// assert_eq!(v.swap_remove(1).unwrap(), ("bar", "bar"));
+    /// assert_eq!(v, soavec![("foo", "foo"), ("qux", "qux"), ("baz", "baz")].unwrap());
+    ///
+    /// assert_eq!(v.swap_remove(0).unwrap(), ("foo", "foo"));
+    /// assert_eq!(v, soavec![("baz", "baz"), ("qux", "qux")].unwrap());
+    /// ```
+    pub fn swap_remove(&mut self, index: u32) -> Result<T, IndexOutOfBoundsError> {
+        let len = self.len();
+        if index >= len {
+            return Err(IndexOutOfBoundsError);
+        }
+
+        let ptr = self.buf.as_mut_ptr();
+        let cap = self.capacity();
+
+        unsafe {
+            let value = T::from_tuple(T::TupleRepr::read(ptr, index, cap));
+
+            let src = T::TupleRepr::get_pointers(ptr, len - 1, cap);
+            let dst = T::TupleRepr::get_pointers(ptr, index, cap);
+            T::TupleRepr::copy(src, dst, 1);
+
+            self.buf.set_len(len - 1);
+
+            Ok(value)
         }
     }
 }
