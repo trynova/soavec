@@ -855,14 +855,9 @@ impl<T: SoAble> SoAVec<T> {
     /// assert_eq!(v.len(), 2);
     /// ```
     pub fn remove(&mut self, index: u32) -> Result<T, InsertError> {
-        #[cold]
-        fn assert_index() -> IndexOutOfBoundsError {
-            IndexOutOfBoundsError
-        }
-
         let len = self.len();
         if index >= len {
-            return Err(assert_index().into());
+            return Err(IndexOutOfBoundsError.into());
         }
 
         let cap = self.buf.capacity();
@@ -920,14 +915,9 @@ impl<T: SoAble> SoAVec<T> {
     /// assert_eq!(vec.get(3), Some((&7, &6)));
     /// ```
     pub fn insert_mut(&mut self, index: u32, element: T) -> Result<T::Mut<'_>, InsertError> {
-        #[cold]
-        fn assert_index() -> IndexOutOfBoundsError {
-            IndexOutOfBoundsError
-        }
-
         let len = self.len();
         if index > len {
-            return Err(assert_index().into());
+            return Err(IndexOutOfBoundsError.into());
         }
 
         if len == self.capacity() {
