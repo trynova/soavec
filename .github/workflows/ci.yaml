@@ -75,3 +75,43 @@ jobs:
         run: cargo test
         env:
           RUST_BACKTRACE: 1
+
+  fuzz:
+    name: Fuzz Testing
+    runs-on: ubuntu-latest
+    env:
+      CARGO_FUZZ_VERSION: 0.12.0
+      FUZZ_TIME: 300
+    strategy:
+      matrix:
+        fuzz_target:
+          - soavec_api
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly
+      - name: Cache cargo-fuzz
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/cargo-fuzz
+          key: cargo-fuzz-bin-${{ env.CARGO_FUZZ_VERSION }}
+      - name: Add cargo-fuzz to PATH
+        run: echo "${{ runner.tool_cache }}/cargo-fuzz/bin" >> $GITHUB_PATH
+      - name: Install cargo-fuzz
+        run: cargo install --root "${{ runner.tool_cache }}/cargo-fuzz" --version ${{ env.CARGO_FUZZ_VERSION }} cargo-fuzz --locked
+      - name: Cache on ${{ github.ref_name }}
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: warm
+      - name: Build fuzz target
+        run: cargo +nightly fuzz build ${{ matrix.fuzz_target }}
+      - name: Run fuzz target
+        run: cargo +nightly fuzz run ${{ matrix.fuzz_target }} -- -max_total_time=${{ env.FUZZ_TIME }}
+      - name: Upload fuzzing artifacts
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzzing-artifacts-${{ matrix.fuzz_target }}-${{ github.sha }}
+          path: fuzz/artifacts
