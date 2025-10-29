@@ -29,6 +29,14 @@ struct StructWithLen {
     len: usize,
 }
 
+#[derive(SoAble)]
+pub enum Value {
+    Undefined,
+    Null,
+    Boolean(bool),
+    Number(f64),
+}
+
 #[test]
 fn test_derive_compiles() {
     // If this compiles, the derive macro worked
@@ -95,4 +103,18 @@ fn test_struct_with_len_field() {
     let back = StructWithLen::from_tuple((9, 12));
     assert_eq!(back.a, 9);
     assert_eq!(back.len, 12);
+}
+
+#[test]
+fn test_enum() {
+    use soavec::SoAble;
+
+    let val = Value::Boolean(true);
+    let tuple = SoAble::into_tuple(val);
+
+    let back = Value::from_tuple(tuple);
+    match back {
+        Value::Boolean(b) => assert!(b),
+        _ => panic!("Expected Value::Boolean"),
+    }
 }
