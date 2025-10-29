@@ -4,7 +4,7 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Fields, spanned::Spanned};
+use syn::{Data, DeriveInput, Fields, Expr, Lit, spanned::Spanned};
 
 pub fn expand_data_enum(input: DeriveInput) -> syn::Result<TokenStream> {
     let enum_name = &input.ident;
@@ -34,9 +34,17 @@ pub fn expand_data_enum(input: DeriveInput) -> syn::Result<TokenStream> {
 
     // Information about the variants
     let mut variant_data = Vec::new();
-    for (variant_idx, variant) in variants.iter().enumerate() {
+    let mut current_discriminant: Expr = syn::parse_quote!(0); 
+    for variant in variants.iter() {
         let variant_name = &variant.ident;
-        let discriminant_value = variant_idx as u8;
+
+        let discriminant_value = variant.discriminant
+            .as_ref()
+            .map(|(_, expr)| expr.clone())
+            .unwrap_or_else(|| current_discriminant.clone());
+
+        // Update current_discriminant for next variant
+        current_discriminant = syn::parse_quote!(#discriminant_value + 1);
 
         // Get field names and types
         let (field_names, field_types): (Vec<_>, Vec<_>) = match &variant.fields {
