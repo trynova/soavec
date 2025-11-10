@@ -16,13 +16,13 @@ default = []
 derive = ["soavec_derive"]
 
 [dependencies]
-soavec_derive = { version = "=0.1.1", path = "../soavec_derive", optional = true }
+soavec_derive = { version = "=0.2.0", path = "../soavec_derive", optional = true }
 
 [dev-dependencies]
-soavec_derive = { version = "=0.1.1", path = "../soavec_derive" }
+soavec_derive = { version = "=0.2.0", path = "../soavec_derive" }
 
 # This cfg cannot be enabled, but it still forces Cargo to keep soavec_derive's
 # version in lockstep with soavec's, even if someone depends on the two crates
 # separately with soavec's "derive" feature disabled.
 [target.'cfg(any())'.dependencies]
-soavec_derive = { version = "=0.1.1", path = "../soavec_derive" }
+soavec_derive = { version = "=0.2.0", path = "../soavec_derive" }
