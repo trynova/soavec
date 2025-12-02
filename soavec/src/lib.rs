@@ -58,6 +58,7 @@
 //! [`as_slice`]: SoAVec::as_slice
 //! [`as_mut_slice`]: SoAVec::as_mut_slice
 
+mod iter;
 mod macros;
 mod raw_vec;
 mod raw_vec_inner;
@@ -66,6 +67,7 @@ mod soable;
 use core::marker::PhantomData;
 use std::ptr::NonNull;
 
+use iter::{SoAIter, SoAIterMut};
 use raw_vec::RawSoAVec;
 use raw_vec_inner::AllocError;
 pub use soable::{SoATuple, SoAble};
@@ -1100,6 +1102,52 @@ impl<T: SoAble> SoAVec<T> {
             Ok(value)
         }
     }
+
+    /// Returns an iterator over the soavec.
+    ///
+    /// The iterator yields all items from start to end.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use soavec::soavec;
+    ///
+    /// let vec = soavec![(1, 2), (3, 4), (5, 6)].unwrap();
+    /// let mut iterator = vec.iter();
+    ///
+    /// assert_eq!(iterator.next(), Some((&1, &2)));
+    /// assert_eq!(iterator.next(), Some((&3, &4)));
+    /// assert_eq!(iterator.next(), Some((&5, &6)));
+    /// assert_eq!(iterator.next(), None);
+    /// ```
+    #[inline]
+    pub fn iter(&self) -> SoAIter<'_, T> {
+        SoAIter::new(self.buf.as_ptr(), self.capacity(), self.len())
+    }
+
+    /// Returns an iterator that allows modifying each value.
+    ///
+    /// The iterator yields all items from start to end.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use soavec::soavec;
+    ///
+    /// let mut vec = soavec![(1, 2), (3, 4), (5, 6)].unwrap();
+    /// for (a, b) in vec.iter_mut() {
+    ///     *a += 10;
+    /// }
+    /// assert_eq!(vec.get(0), Some((&11, &2)));
+    /// assert_eq!(vec.get(1), Some((&13, &4)));
+    /// assert_eq!(vec.get(2), Some((&15, &6)));
+    /// ```
+    #[inline]
+    pub fn iter_mut(&mut self) -> SoAIterMut<'_, T> {
+        let len = self.len();
+        let capacity = self.capacity();
+        SoAIterMut::new(self.buf.as_mut_ptr(), capacity, len)
+    }
 }
 
 impl<T: SoAble> Drop for SoAVec<T> {
@@ -2083,5 +2131,38 @@ mod tests {
         let third = vec.get(2).unwrap();
         assert_eq!(**third.a, 168);
         assert_eq!(third.b, &[6]);
+    }
+
+    #[test]
+    fn test_iter() {
+        let mut vec = SoAVec::<(u32, u32)>::new();
+
+        vec.push((1, 10)).unwrap();
+        vec.push((2, 20)).unwrap();
+        vec.push((3, 30)).unwrap();
+
+        let mut iter = vec.iter();
+        assert_eq!(iter.next(), Some((&1, &10)));
+        assert_eq!(iter.next(), Some((&2, &20)));
+        assert_eq!(iter.next(), Some((&3, &30)));
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_iter_mut() {
+        let mut vec = SoAVec::<(u32, u32)>::new();
+
+        vec.push((1, 10)).unwrap();
+        vec.push((2, 20)).unwrap();
+        vec.push((3, 30)).unwrap();
+
+        for (a, b) in vec.iter_mut() {
+            *a += 100;
+            *b += 5;
+        }
+
+        assert_eq!(vec.get(0), Some((&101, &15)));
+        assert_eq!(vec.get(1), Some((&102, &25)));
+        assert_eq!(vec.get(2), Some((&103, &35)));
     }
 }
