@@ -1672,7 +1672,7 @@ mod tests {
 
         let first = foo.get_mut(0).unwrap();
         first.a.push(52);
-        *first.b = Box::new(66u32);
+        **first.b = 66u32;
         assert_eq!(first.a, &[0, 52]);
         assert_eq!(**first.b, 66u32);
 
