@@ -48,13 +48,7 @@ pub enum TestEnum {
 }
 
 // Test enum with named fields
-#[derive(SoAble)]
-#[repr(u8)]
-pub enum NamedFieldEnum {
-    Point { x: f32, y: f32 },
-    Vector { x: f32, y: f32, z: f32 },
-    Origin,
-}
+
 
 // Test enum with private visibility
 #[derive(SoAble)]
@@ -213,42 +207,4 @@ fn test_discriminant_unsafe_mutation() {
 
     // NOTE: Do NOT attempt to read the union fields now - they contain
     // invalid data for VariantB!
-}
-
-#[test]
-fn test_named_field_enum() {
-    use soavec::{SoAVec, SoAble};
-
-    let mut vec = SoAVec::<NamedFieldEnum>::new();
-    let _ = vec.push(NamedFieldEnum::Point { x: 1.0, y: 2.0 });
-    let _ = vec.push(NamedFieldEnum::Vector {
-        x: 3.0,
-        y: 4.0,
-        z: 5.0,
-    });
-    let _ = vec.push(NamedFieldEnum::Origin);
-
-    let point = NamedFieldEnum::Point { x: 10.0, y: 20.0 };
-    let tuple = SoAble::into_tuple(point);
-    let back = NamedFieldEnum::from_tuple(tuple);
-    match back {
-        NamedFieldEnum::Point { x, y } => {
-            assert_eq!(x, 10.0);
-            assert_eq!(y, 20.0);
-        }
-        _ => panic!("Expected Point variant"),
-    }
-
-    assert_eq!(
-        *vec.get(0).unwrap().get_discriminant(),
-        NamedFieldEnumDiscriminant::Point
-    );
-    assert_eq!(
-        *vec.get(1).unwrap().get_discriminant(),
-        NamedFieldEnumDiscriminant::Vector
-    );
-    assert_eq!(
-        *vec.get(2).unwrap().get_discriminant(),
-        NamedFieldEnumDiscriminant::Origin
-    );
 }

@@ -111,6 +111,18 @@ pub fn expand_data_enum(input: DeriveInput) -> syn::Result<TokenStream> {
         ));
     }
 
+    let has_named_fields = variants
+    .iter()
+    .any(|v| matches!(v.fields, Fields::Named(_)));
+
+        if has_named_fields {
+            return Err(syn::Error::new(
+                variants.span(),
+                "Soable does not currently support enums with named fields; \
+                field-name based layout is required to avoid unsoundness",
+            ));
+        }
+
     let max_fields = get_max_fields(variants);
     let discriminant_enum_name = quote::format_ident!("{}Discriminant", enum_name);
 
@@ -332,7 +344,7 @@ pub fn expand_data_enum(input: DeriveInput) -> syn::Result<TokenStream> {
                 }
             } else {
                 // Variant with fields - extract from unions
-                let field_extractions: Vec<_> = (0..field_names.len())
+                 let field_extractions: Vec<_> = (0..field_names.len())
                     .map(|idx| {
                         let union_field_name = quote::format_ident!("__union{}", idx);
                         let field_name = &field_names[idx];
@@ -719,4 +731,19 @@ mod tests {
         assert!(result.contains("C ,"));
         assert!(result.contains("D = some_function ()"));
     }
+
+    #[test]
+    fn named_field_enum_is_rejected() {
+        let input: syn::DeriveInput = syn::parse_quote! {
+            enum NamedFieldEnum {
+                Point { x: f32, y: f32 },
+                Vector { x: f32, y: f32 },
+            }
+        };
+
+        let result = expand_data_enum(input);
+        assert!(result.is_err());
+    }
+
+
 }
