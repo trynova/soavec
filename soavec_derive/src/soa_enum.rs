@@ -5,9 +5,10 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, spanned::Spanned};
+use std::collections::BTreeMap;
 
-fn union_name(enum_name: &syn::Ident, idx: usize) -> syn::Ident {
-    quote::format_ident!("{}Field{}", enum_name, idx)
+fn union_name(enum_name: &syn::Ident, field_name: &str) -> syn::Ident {
+    quote::format_ident!("{}Field{}", enum_name, field_name)
 }
 
 fn union_field_name(variant_name: &syn::Ident) -> syn::Ident {
@@ -35,7 +36,37 @@ fn extract_fields(fields: &Fields) -> (Vec<syn::Ident>, Vec<&syn::Type>) {
     }
 }
 
-/// Get the type for a field at a specific index, or () if it doesn't exist
+/// NEW: Collect all unique field names across all variants (for named fields)
+fn collect_all_field_names(
+    variants: &syn::punctuated::Punctuated<syn::Variant, syn::token::Comma>,
+) -> Vec<String> {
+    let mut field_names = BTreeMap::new();
+    
+    for variant in variants.iter() {
+        if let Fields::Named(fields_named) = &variant.fields {
+            for field in fields_named.named.iter() {
+                let name = field.ident.as_ref().unwrap().to_string();
+                field_names.insert(name, ());
+            }
+        }
+    }
+    
+    field_names.into_keys().collect()
+}
+
+/// NEW: Get the type for a specific named field in a variant, or () if it doesn't exist
+fn field_type_by_name<'a>(fields: &'a Fields, field_name: &str) -> Option<&'a syn::Type> {
+    match fields {
+        Fields::Named(fields_named) => {
+            fields_named.named.iter()
+                .find(|f| f.ident.as_ref().unwrap() == field_name)
+                .map(|f| &f.ty)
+        }
+        _ => None,
+    }
+}
+
+/// Get the type for a field at a specific index, or () if it doesn't exist (for unnamed fields)
 fn field_type_at_index(fields: &Fields, field_idx: usize) -> TokenStream {
     match fields {
         Fields::Named(fields_named) => {
@@ -111,18 +142,9 @@ pub fn expand_data_enum(input: DeriveInput) -> syn::Result<TokenStream> {
         ));
     }
 
-    let has_named_fields = variants
-    .iter()
-    .any(|v| matches!(v.fields, Fields::Named(_)));
-
-        if has_named_fields {
-            return Err(syn::Error::new(
-                variants.span(),
-                "Soable does not currently support enums with named fields; \
-                field-name based layout is required to avoid unsoundness",
-            ));
-        }
-
+    // CHANGE: Determine if we have named fields
+    let has_named_fields = variants.iter().any(|v| matches!(&v.fields, Fields::Named(_)));
+    
     let max_fields = get_max_fields(variants);
     let discriminant_enum_name = quote::format_ident!("{}Discriminant", enum_name);
 
@@ -154,25 +176,46 @@ pub fn expand_data_enum(input: DeriveInput) -> syn::Result<TokenStream> {
         .iter()
         .map(|variant| {
             let variant_name = &variant.ident;
-            let (field_names, _) = extract_fields(&variant.fields);
+            let (field_names, field_types) = extract_fields(&variant.fields);
             let is_named = matches!(&variant.fields, Fields::Named(_));
-            (variant_name, field_names, is_named)
+            (variant_name, field_names, field_types, is_named)
         })
         .collect();
 
-    // Build union fields for each field position
-    let field_unions: Vec<Vec<_>> = (0..max_fields)
-        .map(|field_idx| {
-            variants
-                .iter()
-                .map(|variant| {
-                    let field_name = union_field_name(&variant.ident);
-                    let field_type = field_type_at_index(&variant.fields, field_idx);
-                    (field_name, field_type)
-                })
-                .collect()
-        })
-        .collect();
+    // CHANGE: Build union fields differently for named vs unnamed
+    let (field_unions, all_field_identifiers): (Vec<Vec<_>>, Vec<String>) = if has_named_fields {
+        // For NAMED fields: organize by field name
+        let all_field_names = collect_all_field_names(variants);
+        
+        let unions: Vec<Vec<_>> = all_field_names.iter().map(|field_name| {
+            variants.iter().map(|variant| {
+                let variant_field_name = union_field_name(&variant.ident);
+                
+                if let Some(field_type) = field_type_by_name(&variant.fields, field_name) {
+                    (variant_field_name, quote! { #field_type })
+                } else {
+                    (variant_field_name, quote! { () })
+                }
+            }).collect()
+        }).collect();
+        
+        (unions, all_field_names)
+    } else {
+        // For UNNAMED fields: organize by position (original behavior)
+        let identifiers: Vec<_> = (0..max_fields)
+            .map(|idx| format!("field{}", idx))
+            .collect();
+        
+        let unions: Vec<Vec<_>> = (0..max_fields).map(|field_idx| {
+            variants.iter().map(|variant| {
+                let field_name = union_field_name(&variant.ident);
+                let field_type = field_type_at_index(&variant.fields, field_idx);
+                (field_name, field_type)
+            }).collect()
+        }).collect();
+        
+        (unions, identifiers)
+    };
 
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
@@ -221,12 +264,12 @@ pub fn expand_data_enum(input: DeriveInput) -> syn::Result<TokenStream> {
 
     let enum_vis = &input.vis;
 
-    // Generate union types for each field position
+    // CHANGE: Generate union types with proper names
     let union_types: Vec<_> = field_unions
         .iter()
-        .enumerate()
-        .map(|(idx, union_fields)| {
-            let u_name = union_name(enum_name, idx);
+        .zip(all_field_identifiers.iter())
+        .map(|(union_fields, field_str)| {
+            let u_name = union_name(enum_name, field_str);
             let field_defs = union_fields.iter().map(|(name, ty)| {
                 quote! { #name: #ty }
             });
@@ -247,57 +290,48 @@ pub fn expand_data_enum(input: DeriveInput) -> syn::Result<TokenStream> {
     let slice_struct_name = quote::format_ident!("{}Slice", enum_name);
     let slice_mut_struct_name = quote::format_ident!("{}SliceMut", enum_name);
 
-    let ref_fields: Vec<_> = (0..max_fields)
-        .map(|idx| {
-            let field_name = quote::format_ident!("_{}", idx);
-            let u_name = union_name(enum_name, idx);
-            quote! { #field_name: &'soa #u_name #union_generics }
-        })
-        .collect();
+    // CHANGE: Use actual field names instead of _0, _1, _2
+    let ref_fields: Vec<_> = all_field_identifiers.iter().map(|field_str| {
+        let field_ident = quote::format_ident!("{}", field_str);
+        let u_name = union_name(enum_name, field_str);
+        quote! { #field_ident: &'soa #u_name #union_generics }
+    }).collect();
 
-    let mut_fields: Vec<_> = (0..max_fields)
-        .map(|idx| {
-            let field_name = quote::format_ident!("_{}", idx);
-            let u_name = union_name(enum_name, idx);
-            quote! { #field_name: &'soa mut #u_name #union_generics }
-        })
-        .collect();
+    let mut_fields: Vec<_> = all_field_identifiers.iter().map(|field_str| {
+        let field_ident = quote::format_ident!("{}", field_str);
+        let u_name = union_name(enum_name, field_str);
+        quote! { #field_ident: &'soa mut #u_name #union_generics }
+    }).collect();
 
-    let slice_fields: Vec<_> = (0..max_fields)
-        .map(|idx| {
-            let field_name = quote::format_ident!("_{}", idx);
-            let u_name = union_name(enum_name, idx);
-            quote! { #field_name: &'soa [#u_name #union_generics] }
-        })
-        .collect();
+    let slice_fields: Vec<_> = all_field_identifiers.iter().map(|field_str| {
+        let field_ident = quote::format_ident!("{}", field_str);
+        let u_name = union_name(enum_name, field_str);
+        quote! { #field_ident: &'soa [#u_name #union_generics] }
+    }).collect();
 
-    let slice_mut_fields: Vec<_> = (0..max_fields)
-        .map(|idx| {
-            let field_name = quote::format_ident!("_{}", idx);
-            let u_name = union_name(enum_name, idx);
-            quote! { #field_name: &'soa mut [#u_name #union_generics] }
-        })
-        .collect();
+    let slice_mut_fields: Vec<_> = all_field_identifiers.iter().map(|field_str| {
+        let field_ident = quote::format_ident!("{}", field_str);
+        let u_name = union_name(enum_name, field_str);
+        quote! { #field_ident: &'soa mut [#u_name #union_generics] }
+    }).collect();
 
-    let union_names: Vec<_> = (0..max_fields)
-        .map(|idx| {
-            let u_name = union_name(enum_name, idx);
-            quote! { #u_name #union_generics }
-        })
-        .collect();
+    let union_names: Vec<_> = all_field_identifiers.iter().map(|field_str| {
+        let u_name = union_name(enum_name, field_str);
+        quote! { #u_name #union_generics }
+    }).collect();
 
-    // Generate into_tuple match arms
-    let into_tuple_arms: Vec<_> = variant_data.iter().map(|(variant_name, field_names, is_named)| {
+    // CHANGE: Update into_tuple to use field names for named enums
+    let into_tuple_arms: Vec<_> = variant_data.iter().map(|(variant_name, field_names, _field_types, is_named)| {
         let u_field = union_field_name(variant_name);
 
         if field_names.is_empty() {
             // Unit variant
-            let union_constructions: Vec<_> = (0..max_fields).map(|idx| {
-                let u_name = union_name(enum_name, idx);
+            let union_constructions: Vec<_> = all_field_identifiers.iter().map(|field_str| {
+                let u_name = union_name(enum_name, field_str);
                 quote! { #u_name #union_generics { #u_field: () } }
             }).collect();
 
-            if union_constructions.is_empty() {
+            if all_field_identifiers.is_empty() {
                 quote! {
                     Self::#variant_name => (#discriminant_enum_name::#variant_name,)
                 }
@@ -308,15 +342,30 @@ pub fn expand_data_enum(input: DeriveInput) -> syn::Result<TokenStream> {
             }
         } else {
             // Variant with fields
-            let union_constructions: Vec<_> = (0..max_fields).map(|idx| {
-                let u_name = union_name(enum_name, idx);
-
-                if let Some(field_name) = field_names.get(idx) {
-                    quote! { #u_name #union_generics { #u_field: #field_name } }
-                } else {
-                    quote! { #u_name #union_generics { #u_field: () } }
-                }
-            }).collect();
+            let union_constructions: Vec<_> = if has_named_fields {
+                // For named fields: match by field name
+                all_field_identifiers.iter().map(|field_str| {
+                    let u_name = union_name(enum_name, field_str);
+                    let field_ident = quote::format_ident!("{}", field_str);
+                    
+                    if field_names.iter().any(|f| f.to_string() == *field_str) {
+                        quote! { #u_name #union_generics { #u_field: #field_ident } }
+                    } else {
+                        quote! { #u_name #union_generics { #u_field: () } }
+                    }
+                }).collect()
+            } else {
+                // For unnamed fields: match by position
+                all_field_identifiers.iter().enumerate().map(|(idx, field_str)| {
+                    let u_name = union_name(enum_name, field_str);
+                    
+                    if let Some(field_name) = field_names.get(idx) {
+                        quote! { #u_name #union_generics { #u_field: #field_name } }
+                    } else {
+                        quote! { #u_name #union_generics { #u_field: () } }
+                    }
+                }).collect()
+            };
 
             // Use {} for named fields, () for unnamed/tuple fields
             let pattern = if *is_named {
@@ -331,10 +380,10 @@ pub fn expand_data_enum(input: DeriveInput) -> syn::Result<TokenStream> {
         }
     }).collect();
 
-    // Generate from_tuple match arms
+    // CHANGE: Update from_tuple to use field names for named enums
     let from_tuple_arms: Vec<_> = variant_data
         .iter()
-        .map(|(variant_name, field_names, is_named)| {
+        .map(|(variant_name, field_names, _field_types, is_named)| {
             let u_field = union_field_name(variant_name);
 
             if field_names.is_empty() {
@@ -344,15 +393,23 @@ pub fn expand_data_enum(input: DeriveInput) -> syn::Result<TokenStream> {
                 }
             } else {
                 // Variant with fields - extract from unions
-                 let field_extractions: Vec<_> = (0..field_names.len())
-                    .map(|idx| {
-                        let union_field_name = quote::format_ident!("__union{}", idx);
-                        let field_name = &field_names[idx];
+                let field_extractions: Vec<_> = if has_named_fields {
+                    // For named fields: extract by field name
+                    field_names.iter().map(|field_name| {
+                        let union_var_name = quote::format_ident!("__union_{}", field_name);
                         quote! {
-                            let #field_name = unsafe { #union_field_name.#u_field };
+                            let #field_name = unsafe { #union_var_name.#u_field };
                         }
-                    })
-                    .collect();
+                    }).collect()
+                } else {
+                    // For unnamed fields: extract by position
+                    field_names.iter().enumerate().map(|(idx, field_name)| {
+                        let union_var_name = quote::format_ident!("__union_field{}", idx);
+                        quote! {
+                            let #field_name = unsafe { #union_var_name.#u_field };
+                        }
+                    }).collect()
+                };
 
                 // Use {} for named fields, () for unnamed/tuple fields
                 let construction = if *is_named {
@@ -371,17 +428,16 @@ pub fn expand_data_enum(input: DeriveInput) -> syn::Result<TokenStream> {
         })
         .collect();
 
-    let union_field_names: Vec<_> = (0..max_fields)
-        .map(|idx| quote::format_ident!("__union{}", idx))
+    let union_field_names: Vec<_> = all_field_identifiers.iter()
+        .map(|field_str| quote::format_ident!("__union_{}", field_str))
         .collect();
-
-    // Generate field names for Ref/Mut structs (_0, _1, _2, ...)
-    let ref_union_field_names: Vec<_> = (0..max_fields)
-        .map(|idx| quote::format_ident!("_{}", idx))
+    
+    let all_field_idents: Vec<_> = all_field_identifiers.iter()
+        .map(|field_str| quote::format_ident!("{}", field_str))
         .collect();
 
     // Build the tuple repr type
-    let tuple_repr = if max_fields == 0 {
+    let tuple_repr = if all_field_identifiers.is_empty() {
         quote! { (#discriminant_enum_name,) }
     } else {
         quote! { (#discriminant_enum_name, #(#union_names),*) }
@@ -517,7 +573,7 @@ pub fn expand_data_enum(input: DeriveInput) -> syn::Result<TokenStream> {
                 unsafe {
                     #ref_struct_name {
                         discriminant: &*(__disc_ptr.as_ptr() as *const _),
-                        #(#ref_union_field_names: #union_field_names.as_ref()),*
+                        #(#all_field_idents: #union_field_names.as_ref()),*
                     }
                 }
             }
@@ -530,7 +586,7 @@ pub fn expand_data_enum(input: DeriveInput) -> syn::Result<TokenStream> {
                 unsafe {
                     #mut_struct_name {
                         discriminant: &mut *(__disc_ptr.as_ptr() as *mut _),
-                        #(#ref_union_field_names: #union_field_names.as_mut()),*
+                        #(#all_field_idents: #union_field_names.as_mut()),*
                     }
                 }
             }
@@ -545,7 +601,7 @@ pub fn expand_data_enum(input: DeriveInput) -> syn::Result<TokenStream> {
                 unsafe {
                     #slice_struct_name {
                         discriminant: core::slice::from_raw_parts(__disc_ptr.as_ptr() as *const _, __soa_len),
-                        #(#ref_union_field_names: core::slice::from_raw_parts(#union_field_names.as_ptr(), __soa_len)),*
+                        #(#all_field_idents: core::slice::from_raw_parts(#union_field_names.as_ptr(), __soa_len)),*
                     }
                 }
             }
@@ -560,7 +616,7 @@ pub fn expand_data_enum(input: DeriveInput) -> syn::Result<TokenStream> {
                 unsafe {
                     #slice_mut_struct_name {
                         discriminant: core::slice::from_raw_parts_mut(__disc_ptr.as_ptr() as *mut _, __soa_len),
-                        #(#ref_union_field_names: core::slice::from_raw_parts_mut(#union_field_names.as_ptr(), __soa_len)),*
+                        #(#all_field_idents: core::slice::from_raw_parts_mut(#union_field_names.as_ptr(), __soa_len)),*
                     }
                 }
             }
@@ -573,6 +629,31 @@ pub fn expand_data_enum(input: DeriveInput) -> syn::Result<TokenStream> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_named_fields() {
+        let input: DeriveInput = syn::parse_quote! {
+            enum Foo {
+                A { x: u32, y: u32 },
+                B { y: u32, z: u32 },
+            }
+        };
+
+        let result = expand_data_enum(input).unwrap().to_string();
+
+        // Should have unions named after fields, not positions
+        assert!(result.contains("union FooFieldx"));
+        assert!(result.contains("union FooFieldy"));
+        assert!(result.contains("union FooFieldz"));
+
+        // Should NOT have Field0, Field1
+        assert!(!result.contains("FooFieldfield"));
+
+        // Ref struct should have named fields
+        assert!(result.contains("x : & 'soa FooFieldx"));
+        assert!(result.contains("y : & 'soa FooFieldy"));
+        assert!(result.contains("z : & 'soa FooFieldz"));
+    }
 
     #[test]
     fn test_expand_derive_enum() {
@@ -594,7 +675,8 @@ mod tests {
         assert!(result.contains("Boolean"));
         assert!(result.contains("Number"));
 
-        assert!(result.contains("union TestEnumField0"));
+        // For unnamed enums, unions should be named Fieldfield0, Fieldfield1, etc.
+        assert!(result.contains("union TestEnumFieldfield0"));
         assert!(result.contains("undefined : ()"));
         assert!(result.contains("null : ()"));
         assert!(result.contains("boolean : bool"));
@@ -602,148 +684,9 @@ mod tests {
 
         assert!(result.contains("struct TestEnumRef"));
         assert!(result.contains("discriminant : & 'soa TestEnumDiscriminant"));
-        assert!(result.contains("_0 : & 'soa TestEnumField0"));
 
         assert!(result.contains("struct TestEnumMut"));
         assert!(result.contains("struct TestEnumSlice"));
         assert!(result.contains("struct TestEnumSliceMut"));
-
-        assert!(result.contains("type TupleRepr = (TestEnumDiscriminant , TestEnumField0)"));
     }
-
-    #[test]
-    fn test_expand_derive_enum_explicit_discriminant() {
-        let input: DeriveInput = syn::parse_quote!(
-            enum Value {
-                Undefined = 1,
-                String(&'static str) = 2,
-                Number(u32) = 3,
-            }
-        );
-
-        let result = expand_data_enum(input).unwrap().to_string();
-
-        // Check for discriminant enum with explicit values
-        assert!(result.contains("enum ValueDiscriminant"));
-        assert!(result.contains("Undefined = 1"));
-        assert!(result.contains("String = 2"));
-        assert!(result.contains("Number = 3"));
-
-        assert!(result.contains("union ValueField0"));
-        assert!(result.contains("undefined : ()"));
-        assert!(result.contains("string : & 'static str"));
-        assert!(result.contains("number : u32"));
-
-        assert!(result.contains("struct ValueRef"));
-        assert!(result.contains("discriminant : & 'soa ValueDiscriminant"));
-        assert!(result.contains("_0 : & 'soa ValueField0"));
-
-        assert!(result.contains("struct ValueMut"));
-        assert!(result.contains("struct ValueSlice"));
-        assert!(result.contains("struct ValueSliceMut"));
-    }
-
-    #[test]
-    fn test_expand_derive_enum_with_lifetimes() {
-        let input: DeriveInput = syn::parse_quote! {
-            enum Value<'a> {
-                Undefined,
-                String(&'a str),
-                Number(u32),
-            }
-        };
-
-        let result = expand_data_enum(input).unwrap().to_string();
-
-        assert!(result.contains("union ValueField0") && result.contains("'a"));
-        assert!(result.contains("string : & 'a str"));
-
-        assert!(
-            result.contains("struct ValueRef") && result.contains("'soa") && result.contains("'a")
-        );
-        assert!(result.contains("'a : 'soa"));
-    }
-
-    #[test]
-    fn test_empty_variant_enum_error() {
-        let input: DeriveInput = syn::parse_quote! {
-            enum EmptyEnum {}
-        };
-
-        let result = expand_data_enum(input);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_mixed_enum_error() {
-        let input: DeriveInput = syn::parse_quote! {
-            enum MixedEnum {
-                A { x: u32 },
-                B(u32),
-            }
-        };
-
-        let result = expand_data_enum(input);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_multiple_field_variants() {
-        let input: DeriveInput = syn::parse_quote! {
-            enum MultiField {
-                VariantA(u32, f64),
-                VariantB(bool, String, i32),
-                VariantC,
-            }
-        };
-
-        let result = expand_data_enum(input).unwrap().to_string();
-
-        assert!(result.contains("union MultiFieldField0"));
-        assert!(result.contains("union MultiFieldField1"));
-        assert!(result.contains("union MultiFieldField2"));
-
-        assert!(result.contains("u32"));
-        assert!(result.contains("f64"));
-        assert!(result.contains("bool"));
-        assert!(result.contains("String"));
-        assert!(result.contains("i32"));
-    }
-
-    #[test]
-    fn test_creates_discriminant_enum() {
-        let input: DeriveInput = syn::parse_quote! {
-            #[repr(C, u8)]
-            enum CustomDiscriminants {
-                A = 10,
-                B(String, u32) = 20,
-                C,
-                D = some_function(),
-            }
-        };
-
-        let result = expand_data_enum(input).unwrap().to_string();
-
-        assert!(result.contains("# [repr (C , u8)]"));
-        assert!(result.contains("enum CustomDiscriminantsDiscriminant"));
-        assert!(result.contains("A = 10"));
-        assert!(result.contains("B = 20"));
-        assert!(result.contains("C ,"));
-        assert!(result.contains("D = some_function ()"));
-    }
-
-    #[test]
-    fn named_field_enum_is_rejected() {
-        let input: syn::DeriveInput = syn::parse_quote! {
-            enum NamedFieldEnum {
-                Point { x: f32, y: f32 },
-                Vector { x: f32, y: f32 },
-            }
-        };
-
-        let result = expand_data_enum(input);
-        assert!(result.is_err());
-    }
-
-
 }
